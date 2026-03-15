@@ -5,8 +5,8 @@ RUN apt-get update && apt-get install -y nodejs npm
 
 # Build frontend
 WORKDIR /app/frontend
-COPY frontend/package*.json ./
-RUN npm ci
+COPY frontend/package.json ./
+RUN npm install --production=false
 COPY frontend/ ./
 RUN npm run build
 
