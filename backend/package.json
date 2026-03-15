@@ -1,0 +1,17 @@
+{
+  "name": "download-everything-backend",
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "bun run --watch src/index.ts",
+    "start": "bun run src/index.ts"
+  },
+  "dependencies": {
+    "elysia": "^1.2.12",
+    "@elysiajs/cors": "^1.2.0",
+    "@elysiajs/static": "^1.2.0"
+  },
+  "devDependencies": {
+    "@types/bun": "latest"
+  }
+}
