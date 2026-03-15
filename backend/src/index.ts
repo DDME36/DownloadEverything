@@ -217,31 +217,11 @@ if (process.env.NODE_ENV === 'production') {
   const frontendPath = '../frontend/dist'
   
   app
-    // Serve static assets (JS, CSS, images)
+    // Serve static assets (JS, CSS, images) - ต้อง serve ทั้ง root
     .use(staticPlugin({
       assets: frontendPath,
-      prefix: '/assets',
+      prefix: '/',
     }))
-    // SPA fallback - ส่ง index.html สำหรับ routes ที่ไม่ใช่ /api/*
-    .get('*', async ({ path, set }) => {
-      // ถ้าเป็น API route ให้ข้าม
-      if (path.startsWith('/api/')) {
-        set.status = 404
-        return { error: 'Not found' }
-      }
-      
-      // ส่ง index.html
-      const indexPath = `${frontendPath}/index.html`
-      const file = Bun.file(indexPath)
-      
-      if (!(await file.exists())) {
-        set.status = 500
-        return 'Frontend not built. Run: cd frontend && npm run build'
-      }
-      
-      set.headers['content-type'] = 'text/html'
-      return file
-    })
 }
 
 app.listen(PORT)
