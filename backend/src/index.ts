@@ -1,6 +1,5 @@
 import { Elysia } from 'elysia'
 import { cors } from '@elysiajs/cors'
-import { staticPlugin } from '@elysiajs/static'
 import { detectUrl, isValidUrl } from './services/urlDetector'
 import { getYoutubeInfo, downloadYoutube } from './services/youtube'
 import { getInstagramInfo, downloadInstagram } from './services/instagram'
@@ -216,12 +215,43 @@ const app = new Elysia()
 if (process.env.NODE_ENV === 'production') {
   const frontendPath = '../frontend/dist'
   
-  app
-    // Serve static assets (JS, CSS, images) - ต้อง serve ทั้ง root
-    .use(staticPlugin({
-      assets: frontendPath,
-      prefix: '/',
-    }))
+  // Serve static files manually (ไม่ใช้ plugin)
+  app.get('*', async ({ path, set }) => {
+    // API routes
+    if (path.startsWith('/api/')) {
+      set.status = 404
+      return { error: 'API endpoint not found' }
+    }
+    
+    // Static files (JS, CSS, images)
+    if (path.startsWith('/assets/') || path.endsWith('.ico') || path.endsWith('.png') || path.endsWith('.jpg')) {
+      const filePath = `${frontendPath}${path}`
+      const file = Bun.file(filePath)
+      
+      if (await file.exists()) {
+        // Set correct content type
+        if (path.endsWith('.js')) set.headers['content-type'] = 'application/javascript'
+        else if (path.endsWith('.css')) set.headers['content-type'] = 'text/css'
+        else if (path.endsWith('.png')) set.headers['content-type'] = 'image/png'
+        else if (path.endsWith('.jpg') || path.endsWith('.jpeg')) set.headers['content-type'] = 'image/jpeg'
+        else if (path.endsWith('.ico')) set.headers['content-type'] = 'image/x-icon'
+        
+        return file
+      }
+    }
+    
+    // SPA fallback - serve index.html for all other routes
+    const indexPath = `${frontendPath}/index.html`
+    const indexFile = Bun.file(indexPath)
+    
+    if (!(await indexFile.exists())) {
+      set.status = 500
+      return 'Frontend not built'
+    }
+    
+    set.headers['content-type'] = 'text/html'
+    return indexFile
+  })
 }
 
 app.listen(PORT)
