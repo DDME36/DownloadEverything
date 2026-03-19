@@ -25,9 +25,9 @@ export async function getYoutubeInfo(url: string): Promise<MediaInfo> {
         url
       ]
     },
-    // Strategy 2: ใช้ android_embedded client
+    // Strategy 2: ใช้ ios client
     {
-      name: 'android_embedded',
+      name: 'ios',
       args: [
         'yt-dlp', 
         '--dump-json', 
@@ -35,27 +35,12 @@ export async function getYoutubeInfo(url: string): Promise<MediaInfo> {
         '--no-playlist',
         '--socket-timeout', '30',
         '--no-check-certificate',
-        '--extractor-args', 'youtube:player_client=android_embedded',
+        '--extractor-args', 'youtube:player_client=ios',
         '--age-limit', '21',
         url
       ]
     },
-    // Strategy 3: ใช้ tv_embedded client
-    {
-      name: 'tv_embedded',
-      args: [
-        'yt-dlp', 
-        '--dump-json', 
-        '--no-download', 
-        '--no-playlist',
-        '--socket-timeout', '30',
-        '--no-check-certificate',
-        '--extractor-args', 'youtube:player_client=tv_embedded',
-        '--age-limit', '21',
-        url
-      ]
-    },
-    // Strategy 4: ใช้ web client + bypass
+    // Strategy 3: ใช้ web client + bypass
     {
       name: 'web',
       args: [
@@ -66,7 +51,7 @@ export async function getYoutubeInfo(url: string): Promise<MediaInfo> {
         '--socket-timeout', '30',
         '--no-check-certificate',
         '--user-agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        '--extractor-args', 'youtube:player_client=web,player_skip=webpage,configs',
+        '--extractor-args', 'youtube:player_client=web',
         '--age-limit', '21',
         url
       ]
@@ -76,9 +61,16 @@ export async function getYoutubeInfo(url: string): Promise<MediaInfo> {
   let lastError = ''
   
   // ลองทุก strategy จนกว่าจะสำเร็จ
-  for (const strategy of strategies) {
+  for (let i = 0; i < strategies.length; i++) {
+    const strategy = strategies[i]
     try {
-      log('info', `Trying strategy: ${strategy.name}`)
+      log('info', `Trying strategy ${i + 1}/${strategies.length}: ${strategy.name}`)
+      
+      // หน่วงเวลาเล็กน้อยระหว่าง retry เพื่อหลีกเลี่ยง bot detection
+      if (i > 0) {
+        await new Promise(resolve => setTimeout(resolve, 1000))
+      }
+      
       const proc = Bun.spawn(strategy.args, {
         stdout: 'pipe', 
         stderr: 'pipe',
@@ -93,12 +85,12 @@ export async function getYoutubeInfo(url: string): Promise<MediaInfo> {
 
       if (exitCode === 0 && output.trim()) {
         // สำเร็จ! ประมวลผลข้อมูล
-        log('info', `Success with strategy: ${strategy.name}`)
+        log('info', `✅ Success with strategy: ${strategy.name}`)
         const info = JSON.parse(output)
         return processYoutubeInfo(info)
       }
       
-      log('warn', `Strategy ${strategy.name} failed: ${errorOutput.substring(0, 200)}`)
+      log('warn', `❌ Strategy ${strategy.name} failed: ${errorOutput.substring(0, 150)}`)
       lastError = errorOutput
     } catch (err) {
       lastError = err instanceof Error ? err.message : String(err)
@@ -254,9 +246,9 @@ export async function downloadYoutube(url: string, optionId: string): Promise<Do
         url
       ]
     },
-    // Strategy 2: Android Embedded client
+    // Strategy 2: iOS client
     {
-      name: 'android_embedded',
+      name: 'ios',
       args: [
         'yt-dlp', 
         ...formatArgs, 
@@ -268,31 +260,12 @@ export async function downloadYoutube(url: string, optionId: string): Promise<Do
         '--retries', '3',
         '--extractor-retries', '3',
         '--no-check-certificate',
-        '--extractor-args', 'youtube:player_client=android_embedded',
+        '--extractor-args', 'youtube:player_client=ios',
         '--age-limit', '21',
         url
       ]
     },
-    // Strategy 3: TV Embedded client
-    {
-      name: 'tv_embedded',
-      args: [
-        'yt-dlp', 
-        ...formatArgs, 
-        '-o', '-',
-        '--no-playlist',
-        '--quiet',
-        '--no-warnings',
-        '--socket-timeout', '30',
-        '--retries', '3',
-        '--extractor-retries', '3',
-        '--no-check-certificate',
-        '--extractor-args', 'youtube:player_client=tv_embedded',
-        '--age-limit', '21',
-        url
-      ]
-    },
-    // Strategy 4: Web client (fallback)
+    // Strategy 3: Web client (fallback)
     {
       name: 'web',
       args: [
@@ -307,7 +280,7 @@ export async function downloadYoutube(url: string, optionId: string): Promise<Do
         '--extractor-retries', '3',
         '--no-check-certificate',
         '--user-agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        '--extractor-args', 'youtube:player_client=web,player_skip=webpage,configs',
+        '--extractor-args', 'youtube:player_client=web',
         '--age-limit', '21',
         url
       ]
@@ -317,9 +290,16 @@ export async function downloadYoutube(url: string, optionId: string): Promise<Do
   let lastError = ''
   
   // ลองแต่ละ strategy
-  for (const strategy of downloadStrategies) {
+  for (let i = 0; i < downloadStrategies.length; i++) {
+    const strategy = downloadStrategies[i]
     try {
-      log('info', `Download trying strategy: ${strategy.name}`)
+      log('info', `Download trying strategy ${i + 1}/${downloadStrategies.length}: ${strategy.name}`)
+      
+      // หน่วงเวลาเล็กน้อยระหว่าง retry
+      if (i > 0) {
+        await new Promise(resolve => setTimeout(resolve, 1000))
+      }
+      
       const proc = Bun.spawn(strategy.args, {
         stdout: 'pipe', 
         stderr: 'pipe',
@@ -331,14 +311,14 @@ export async function downloadYoutube(url: string, optionId: string): Promise<Do
         const errorOutput = await new Response(proc.stderr).text()
         const exitCode = await proc.exited
         if (exitCode !== 0 && errorOutput) {
-          log('warn', `Download strategy ${strategy.name} failed: ${errorOutput.substring(0, 200)}`)
+          log('warn', `❌ Download strategy ${strategy.name} failed: ${errorOutput.substring(0, 150)}`)
           lastError = errorOutput
           throw new Error(errorOutput)
         }
       })()
 
       // ถ้า stream เริ่มได้ ถือว่าสำเร็จ
-      log('info', `Download success with strategy: ${strategy.name}`)
+      log('info', `✅ Download success with strategy: ${strategy.name}`)
       return { 
         stream: proc.stdout,
         filename, 
@@ -368,12 +348,12 @@ function throwYtDlpError(msg: string): never {
   if (msg.includes('unavailable') || msg.includes('removed') || msg.includes('Video unavailable')) {
     throw new AppError('NOT_FOUND', 'ไม่พบวิดีโอนี้ อาจถูกลบไปแล้วครับ', 404)
   }
-  if (msg.includes('Sign in') || msg.includes('age') || msg.includes('age-restricted') || msg.includes('confirm your age')) {
+  if (msg.includes('Sign in') || msg.includes('bot') || msg.includes('age') || msg.includes('age-restricted') || msg.includes('confirm your age')) {
     throw new AppError(
       'AUTH_REQUIRED', 
-      'วิดีโอนี้มีข้อจำกัดอายุ - ระบบพยายามแก้ไขอัตโนมัติแล้ว', 
+      'วิดีโอนี้มีข้อจำกัด (อายุ/bot detection)', 
       403, 
-      'ลองอัปเดต yt-dlp ด้วยคำสั่ง: yt-dlp -U หรือติดต่อผู้ดูแลระบบ'
+      'YouTube กำลังบล็อก IP ของเซิร์ฟเวอร์ - ลองใหม่ในอีก 5-10 นาที หรือลองวิดีโออื่น'
     )
   }
   if (msg.includes('not available in your country') || msg.includes('geo')) {
