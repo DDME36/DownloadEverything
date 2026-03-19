@@ -4,33 +4,93 @@ import { sanitizeFilename, ensureTempDir, log } from '../utils/helpers'
 
 /**
  * ดึงข้อมูลวิดีโอ YouTube (ชื่อ, ปก, ตัวเลือกความละเอียด)
+ * รองรับวิดีโอที่มีข้อจำกัดอายุและต้องล็อกอิน
  */
 export async function getYoutubeInfo(url: string): Promise<MediaInfo> {
-  // ลบ --flat-playlist เพื่อให้ได้ข้อมูล formats ครบ
-  const proc = Bun.spawn([
-    'yt-dlp', 
-    '--dump-json', 
-    '--no-download', 
-    '--no-playlist',
-    '--socket-timeout', '30',
-    url
-  ], {
-    stdout: 'pipe', 
-    stderr: 'pipe',
-    env: { ...process.env, PYTHONIOENCODING: 'utf-8' },
-  })
+  // ลอง multiple strategies เพื่อ bypass age restriction
+  const strategies = [
+    // Strategy 1: ใช้ android client (ดีที่สุดสำหรับ age-restricted)
+    {
+      args: [
+        'yt-dlp', 
+        '--dump-json', 
+        '--no-download', 
+        '--no-playlist',
+        '--socket-timeout', '30',
+        '--user-agent', 'com.google.android.youtube/17.36.4 (Linux; U; Android 12; GB) gzip',
+        '--extractor-args', 'youtube:player_client=android',
+        '--age-limit', '21',
+        url
+      ]
+    },
+    // Strategy 2: ใช้ tv_embedded client
+    {
+      args: [
+        'yt-dlp', 
+        '--dump-json', 
+        '--no-download', 
+        '--no-playlist',
+        '--socket-timeout', '30',
+        '--extractor-args', 'youtube:player_client=tv_embedded',
+        '--age-limit', '21',
+        url
+      ]
+    },
+    // Strategy 3: ใช้ web client แบบปกติ
+    {
+      args: [
+        'yt-dlp', 
+        '--dump-json', 
+        '--no-download', 
+        '--no-playlist',
+        '--socket-timeout', '30',
+        '--user-agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        '--extractor-args', 'youtube:player_client=web',
+        url
+      ]
+    }
+  ]
 
-  const [output, errorOutput] = await Promise.all([
-    new Response(proc.stdout).text(),
-    new Response(proc.stderr).text(),
-  ])
-  const exitCode = await proc.exited
+  let lastError = ''
+  
+  // ลองทุก strategy จนกว่าจะสำเร็จ
+  for (const strategy of strategies) {
+    try {
+      const proc = Bun.spawn(strategy.args, {
+        stdout: 'pipe', 
+        stderr: 'pipe',
+        env: { ...process.env, PYTHONIOENCODING: 'utf-8' },
+      })
 
-  if (exitCode !== 0) {
-    throwYtDlpError(errorOutput)
+      const [output, errorOutput] = await Promise.all([
+        new Response(proc.stdout).text(),
+        new Response(proc.stderr).text(),
+      ])
+      const exitCode = await proc.exited
+
+      if (exitCode === 0 && output.trim()) {
+        // สำเร็จ! ประมวลผลข้อมูล
+        const info = JSON.parse(output)
+        return processYoutubeInfo(info)
+      }
+      
+      lastError = errorOutput
+    } catch (err) {
+      lastError = err instanceof Error ? err.message : String(err)
+      continue
+    }
   }
 
-  const info = JSON.parse(output)
+  // ถ้าลองทุกวิธีแล้วยังไม่ได้
+  throwYtDlpError(lastError)
+  throw new Error('Unreachable') // TypeScript guard
+}
+
+/**
+ * ประมวลผลข้อมูลวิดีโอจาก yt-dlp
+ */
+function processYoutubeInfo(info: any): MediaInfo {
+
   const options: MediaInfo['options'] = []
 
   // รวบรวมความละเอียดที่มีอยู่
@@ -77,6 +137,7 @@ export async function getYoutubeInfo(url: string): Promise<MediaInfo> {
 
 /**
  * ดาวน์โหลดวิดีโอ/เสียง YouTube แบบ streaming (optimized for free tier)
+ * รองรับวิดีโอที่มีข้อจำกัดอายุและต้องล็อกอิน
  */
 export async function downloadYoutube(url: string, optionId: string): Promise<DownloadResult> {
   const isAudio = optionId.startsWith('audio_')
@@ -90,7 +151,6 @@ export async function downloadYoutube(url: string, optionId: string): Promise<Do
     if (optionId === 'audio_wav') {
       ext = 'wav'
       contentType = 'audio/wav'
-      // WAV ต้องใช้ bestaudio แล้วค่อย convert
       formatArgs = [
         '-f', 'bestaudio/best',
         '-x', 
@@ -136,7 +196,7 @@ export async function downloadYoutube(url: string, optionId: string): Promise<Do
   // ดึง title ก่อน (เร็ว)
   let filename = `download.${ext}`
   try {
-    const titleProc = Bun.spawn(['yt-dlp', '--get-title', '--no-playlist', url], { 
+    const titleProc = Bun.spawn(['yt-dlp', '--get-title', '--no-playlist', '--age-limit', '21', url], { 
       stdout: 'pipe', 
       stderr: 'pipe',
       env: { ...process.env, PYTHONIOENCODING: 'utf-8' },
@@ -147,45 +207,104 @@ export async function downloadYoutube(url: string, optionId: string): Promise<Do
 
   log('info', `Streaming download: ${url} → ${filename}`)
 
-  // Stream ตรงไปที่ stdout
-  const proc = Bun.spawn([
-    'yt-dlp', 
-    ...formatArgs, 
-    '-o', '-',  // output to stdout
-    '--no-playlist',
-    '--quiet',
-    '--no-warnings',
-    '--socket-timeout', '30',
-    '--retries', '3',
-    '--extractor-retries', '3',
-    '--sleep-requests', '1',
-    url
-  ], {
-    stdout: 'pipe', 
-    stderr: 'pipe',
-    env: { ...process.env, PYTHONIOENCODING: 'utf-8' },
-  })
-
-  // เช็ค error ใน background
-  const errorCheck = (async () => {
-    const errorOutput = await new Response(proc.stderr).text()
-    const exitCode = await proc.exited
-    if (exitCode !== 0 && errorOutput) {
-      throwYtDlpError(errorOutput)
+  // ลอง multiple strategies สำหรับ download
+  const downloadStrategies = [
+    // Strategy 1: Android client (ดีที่สุดสำหรับ age-restricted)
+    {
+      args: [
+        'yt-dlp', 
+        ...formatArgs, 
+        '-o', '-',
+        '--no-playlist',
+        '--quiet',
+        '--no-warnings',
+        '--socket-timeout', '30',
+        '--retries', '3',
+        '--extractor-retries', '3',
+        '--user-agent', 'com.google.android.youtube/17.36.4 (Linux; U; Android 12; GB) gzip',
+        '--extractor-args', 'youtube:player_client=android',
+        '--age-limit', '21',
+        url
+      ]
+    },
+    // Strategy 2: TV Embedded client
+    {
+      args: [
+        'yt-dlp', 
+        ...formatArgs, 
+        '-o', '-',
+        '--no-playlist',
+        '--quiet',
+        '--no-warnings',
+        '--socket-timeout', '30',
+        '--retries', '3',
+        '--extractor-retries', '3',
+        '--extractor-args', 'youtube:player_client=tv_embedded',
+        '--age-limit', '21',
+        url
+      ]
+    },
+    // Strategy 3: Web client (fallback)
+    {
+      args: [
+        'yt-dlp', 
+        ...formatArgs, 
+        '-o', '-',
+        '--no-playlist',
+        '--quiet',
+        '--no-warnings',
+        '--socket-timeout', '30',
+        '--retries', '3',
+        '--extractor-retries', '3',
+        '--user-agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        '--extractor-args', 'youtube:player_client=web',
+        url
+      ]
     }
-  })()
+  ]
 
-  return { 
-    stream: proc.stdout,
-    filename, 
-    contentType,
-    cleanup: async () => {
-      try {
-        proc.kill()
-        await errorCheck
-      } catch { /* ok */ }
+  let lastError = ''
+  
+  // ลองแต่ละ strategy
+  for (const strategy of downloadStrategies) {
+    try {
+      const proc = Bun.spawn(strategy.args, {
+        stdout: 'pipe', 
+        stderr: 'pipe',
+        env: { ...process.env, PYTHONIOENCODING: 'utf-8' },
+      })
+
+      // เช็ค error ใน background
+      const errorCheck = (async () => {
+        const errorOutput = await new Response(proc.stderr).text()
+        const exitCode = await proc.exited
+        if (exitCode !== 0 && errorOutput) {
+          lastError = errorOutput
+          throw new Error(errorOutput)
+        }
+      })()
+
+      // ถ้า stream เริ่มได้ ถือว่าสำเร็จ
+      return { 
+        stream: proc.stdout,
+        filename, 
+        contentType,
+        cleanup: async () => {
+          try {
+            proc.kill()
+            await errorCheck
+          } catch { /* ok */ }
+        }
+      }
+    } catch (err) {
+      lastError = err instanceof Error ? err.message : String(err)
+      continue
     }
   }
+
+  // ถ้าลองทุกวิธีแล้วยังไม่ได้
+  throwYtDlpError(lastError)
+  throw new Error('Unreachable') // TypeScript guard
 }
 
 function throwYtDlpError(msg: string): never {
@@ -195,14 +314,19 @@ function throwYtDlpError(msg: string): never {
   if (msg.includes('unavailable') || msg.includes('removed') || msg.includes('Video unavailable')) {
     throw new AppError('NOT_FOUND', 'ไม่พบวิดีโอนี้ อาจถูกลบไปแล้วครับ', 404)
   }
-  if (msg.includes('Sign in') || msg.includes('age') || msg.includes('age-restricted')) {
-    throw new AppError('AUTH_REQUIRED', 'วิดีโอนี้ต้องล็อกอินหรือมีข้อจำกัดอายุ ดาวน์โหลดไม่ได้ครับ', 403)
+  if (msg.includes('Sign in') || msg.includes('age') || msg.includes('age-restricted') || msg.includes('confirm your age')) {
+    throw new AppError(
+      'AUTH_REQUIRED', 
+      'วิดีโอนี้มีข้อจำกัดอายุ - ระบบพยายามแก้ไขอัตโนมัติแล้ว', 
+      403, 
+      'ลองอัปเดต yt-dlp ด้วยคำสั่ง: yt-dlp -U หรือติดต่อผู้ดูแลระบบ'
+    )
   }
   if (msg.includes('not available in your country') || msg.includes('geo')) {
     throw new AppError('GEO_BLOCKED', 'วิดีโอนี้ไม่สามารถเข้าถึงได้ในประเทศของคุณ', 403, 'ลองใช้ VPN หรือเลือกวิดีโออื่น')
   }
-  if (msg.includes('429') || msg.includes('Too Many Requests') || msg.includes('rate limit') || msg.includes('HTTP Error 429')) {
-    throw new AppError('RATE_LIMITED', 'YouTube จำกัดจำนวนครั้งการดาวน์โหลด', 429, 'รอ 5-10 นาที แล้วลองใหม่ หรือลองวิดีโออื่นก่อน')
+  if (msg.includes('429') || msg.includes('Too Many Requests') || msg.includes('rate limit') || msg.includes('HTTP Error 429') || msg.includes('403')) {
+    throw new AppError('RATE_LIMITED', 'YouTube บล็อก IP ของเซิร์ฟเวอร์ชั่วคราว', 429, 'ลองวิดีโออื่นก่อน หรือรอ 10-15 นาทีแล้วลองใหม่')
   }
   if (msg.includes('Requested format is not available')) {
     throw new AppError('FORMAT_UNAVAILABLE', 'ความละเอียดที่เลือกไม่มีให้ดาวน์โหลด', 400, 'ลองเลือกความละเอียดอื่น')
