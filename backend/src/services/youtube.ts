@@ -11,41 +11,63 @@ export async function getYoutubeInfo(url: string): Promise<MediaInfo> {
   const strategies = [
     // Strategy 1: ใช้ android client (ดีที่สุดสำหรับ age-restricted)
     {
+      name: 'android',
       args: [
         'yt-dlp', 
         '--dump-json', 
         '--no-download', 
         '--no-playlist',
         '--socket-timeout', '30',
-        '--user-agent', 'com.google.android.youtube/17.36.4 (Linux; U; Android 12; GB) gzip',
+        '--no-check-certificate',
+        '--user-agent', 'com.google.android.youtube/19.09.37 (Linux; U; Android 13; en_US)',
         '--extractor-args', 'youtube:player_client=android',
         '--age-limit', '21',
         url
       ]
     },
-    // Strategy 2: ใช้ tv_embedded client
+    // Strategy 2: ใช้ android_embedded client
     {
+      name: 'android_embedded',
       args: [
         'yt-dlp', 
         '--dump-json', 
         '--no-download', 
         '--no-playlist',
         '--socket-timeout', '30',
+        '--no-check-certificate',
+        '--extractor-args', 'youtube:player_client=android_embedded',
+        '--age-limit', '21',
+        url
+      ]
+    },
+    // Strategy 3: ใช้ tv_embedded client
+    {
+      name: 'tv_embedded',
+      args: [
+        'yt-dlp', 
+        '--dump-json', 
+        '--no-download', 
+        '--no-playlist',
+        '--socket-timeout', '30',
+        '--no-check-certificate',
         '--extractor-args', 'youtube:player_client=tv_embedded',
         '--age-limit', '21',
         url
       ]
     },
-    // Strategy 3: ใช้ web client แบบปกติ
+    // Strategy 4: ใช้ web client + bypass
     {
+      name: 'web',
       args: [
         'yt-dlp', 
         '--dump-json', 
         '--no-download', 
         '--no-playlist',
         '--socket-timeout', '30',
+        '--no-check-certificate',
         '--user-agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        '--extractor-args', 'youtube:player_client=web',
+        '--extractor-args', 'youtube:player_client=web,player_skip=webpage,configs',
+        '--age-limit', '21',
         url
       ]
     }
@@ -56,6 +78,7 @@ export async function getYoutubeInfo(url: string): Promise<MediaInfo> {
   // ลองทุก strategy จนกว่าจะสำเร็จ
   for (const strategy of strategies) {
     try {
+      log('info', `Trying strategy: ${strategy.name}`)
       const proc = Bun.spawn(strategy.args, {
         stdout: 'pipe', 
         stderr: 'pipe',
@@ -70,10 +93,12 @@ export async function getYoutubeInfo(url: string): Promise<MediaInfo> {
 
       if (exitCode === 0 && output.trim()) {
         // สำเร็จ! ประมวลผลข้อมูล
+        log('info', `Success with strategy: ${strategy.name}`)
         const info = JSON.parse(output)
         return processYoutubeInfo(info)
       }
       
+      log('warn', `Strategy ${strategy.name} failed: ${errorOutput.substring(0, 200)}`)
       lastError = errorOutput
     } catch (err) {
       lastError = err instanceof Error ? err.message : String(err)
@@ -211,6 +236,7 @@ export async function downloadYoutube(url: string, optionId: string): Promise<Do
   const downloadStrategies = [
     // Strategy 1: Android client (ดีที่สุดสำหรับ age-restricted)
     {
+      name: 'android',
       args: [
         'yt-dlp', 
         ...formatArgs, 
@@ -221,14 +247,16 @@ export async function downloadYoutube(url: string, optionId: string): Promise<Do
         '--socket-timeout', '30',
         '--retries', '3',
         '--extractor-retries', '3',
-        '--user-agent', 'com.google.android.youtube/17.36.4 (Linux; U; Android 12; GB) gzip',
+        '--no-check-certificate',
+        '--user-agent', 'com.google.android.youtube/19.09.37 (Linux; U; Android 13; en_US)',
         '--extractor-args', 'youtube:player_client=android',
         '--age-limit', '21',
         url
       ]
     },
-    // Strategy 2: TV Embedded client
+    // Strategy 2: Android Embedded client
     {
+      name: 'android_embedded',
       args: [
         'yt-dlp', 
         ...formatArgs, 
@@ -239,13 +267,34 @@ export async function downloadYoutube(url: string, optionId: string): Promise<Do
         '--socket-timeout', '30',
         '--retries', '3',
         '--extractor-retries', '3',
+        '--no-check-certificate',
+        '--extractor-args', 'youtube:player_client=android_embedded',
+        '--age-limit', '21',
+        url
+      ]
+    },
+    // Strategy 3: TV Embedded client
+    {
+      name: 'tv_embedded',
+      args: [
+        'yt-dlp', 
+        ...formatArgs, 
+        '-o', '-',
+        '--no-playlist',
+        '--quiet',
+        '--no-warnings',
+        '--socket-timeout', '30',
+        '--retries', '3',
+        '--extractor-retries', '3',
+        '--no-check-certificate',
         '--extractor-args', 'youtube:player_client=tv_embedded',
         '--age-limit', '21',
         url
       ]
     },
-    // Strategy 3: Web client (fallback)
+    // Strategy 4: Web client (fallback)
     {
+      name: 'web',
       args: [
         'yt-dlp', 
         ...formatArgs, 
@@ -256,8 +305,10 @@ export async function downloadYoutube(url: string, optionId: string): Promise<Do
         '--socket-timeout', '30',
         '--retries', '3',
         '--extractor-retries', '3',
+        '--no-check-certificate',
         '--user-agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        '--extractor-args', 'youtube:player_client=web',
+        '--extractor-args', 'youtube:player_client=web,player_skip=webpage,configs',
+        '--age-limit', '21',
         url
       ]
     }
@@ -268,6 +319,7 @@ export async function downloadYoutube(url: string, optionId: string): Promise<Do
   // ลองแต่ละ strategy
   for (const strategy of downloadStrategies) {
     try {
+      log('info', `Download trying strategy: ${strategy.name}`)
       const proc = Bun.spawn(strategy.args, {
         stdout: 'pipe', 
         stderr: 'pipe',
@@ -279,12 +331,14 @@ export async function downloadYoutube(url: string, optionId: string): Promise<Do
         const errorOutput = await new Response(proc.stderr).text()
         const exitCode = await proc.exited
         if (exitCode !== 0 && errorOutput) {
+          log('warn', `Download strategy ${strategy.name} failed: ${errorOutput.substring(0, 200)}`)
           lastError = errorOutput
           throw new Error(errorOutput)
         }
       })()
 
       // ถ้า stream เริ่มได้ ถือว่าสำเร็จ
+      log('info', `Download success with strategy: ${strategy.name}`)
       return { 
         stream: proc.stdout,
         filename, 
