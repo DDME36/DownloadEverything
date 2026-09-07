@@ -14,7 +14,14 @@ export default function DownloadProgressPanel({
   onShare,
   onReset,
 }) {
-  const [visualProgress, setVisualProgress] = useState(downloadProgress || 0)
+  const [visualProgress, setVisualProgress] = useState(0)
+
+  // รีเซ็ตความคืบหน้าให้เริ่มจาก 0 เสมอเมื่อเริ่มงานใหม่
+  useEffect(() => {
+    if (downloadStatus === 'running' && (downloadProgress === 0 || !downloadProgress)) {
+      setVisualProgress(0)
+    }
+  }, [activeOption?.id, downloadStatus])
 
   useEffect(() => {
     if (downloadStatus !== 'running') {
@@ -165,8 +172,8 @@ export default function DownloadProgressPanel({
           aria-valuemax="100"
         >
           <div
-            className={`download-active-fill ${displayProgress === 0 ? 'download-active-fill--indeterminate' : ''}`}
-            style={{ width: `${Math.max(displayProgress, 6)}%` }}
+            className="download-active-fill"
+            style={{ width: `${displayProgress}%` }}
           >
             <div className="download-active-shimmer" />
           </div>

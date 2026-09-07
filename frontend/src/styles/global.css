@@ -1491,14 +1491,7 @@ body::before {
 }
 
 .download-active-fill--indeterminate {
-  width: 45% !important;
-  animation: indeterminateActive 1.6s infinite ease-in-out;
-}
-
-@keyframes indeterminateActive {
-  0% { transform: translateX(-100%); }
-  50% { transform: translateX(120%); }
-  100% { transform: translateX(300%); }
+  opacity: 0.6;
 }
 
 .download-active-percent {

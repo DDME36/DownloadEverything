@@ -217,14 +217,14 @@ export function updateJobProgress(jobId: string, progress: number, stage?: Downl
   if (stage) {
     const stmt = db.prepare(`
       UPDATE jobs 
-      SET progress = ?, stage = ?, updated_at = ? 
+      SET progress = MAX(progress, ?), stage = ?, updated_at = ? 
       WHERE id = ? AND status = 'downloading'
     `)
     stmt.run(Math.min(Math.max(progress, 0), 100), stage, Date.now(), jobId)
   } else {
     const stmt = db.prepare(`
       UPDATE jobs 
-      SET progress = ?, updated_at = ? 
+      SET progress = MAX(progress, ?), updated_at = ? 
       WHERE id = ? AND status = 'downloading'
     `)
     stmt.run(Math.min(Math.max(progress, 0), 100), Date.now(), jobId)

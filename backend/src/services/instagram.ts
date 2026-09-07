@@ -147,7 +147,12 @@ export async function getInstagramInfo(
         const ogMatch = html.match(/<meta\s+property="og:image"\s+content="([^"]+)"/i)
         if (!profilePicUrl && ogMatch) {
           const pic = decodeAllHtmlEntities(ogMatch[1])
-          if (!pic.includes('instagram-logo') && !pic.includes('static/images')) {
+          if (
+            !pic.includes('instagram-logo') && 
+            !pic.includes('static/images') && 
+            !pic.includes('rsrc.php') &&
+            !pic.includes('static.cdninstagram.com')
+          ) {
             profilePicUrl = pic
             resolution = '150px (Instagram จำกัดสิทธิ์สาธารณะ)'
           }
@@ -159,7 +164,12 @@ export async function getInstagramInfo(
   }
 
   if (!profilePicUrl) {
-    throw new AppError('NO_IMAGE', `ไม่สามารถดึงรูปโปรไฟล์ @${cleanUsername} ได้`, 404, 'Instagram อาจไม่ส่งข้อมูลให้คำขอที่ไม่ได้เข้าสู่ระบบ ลองเปิดลิงก์ต้นฉบับเพื่อตรวจสอบบัญชี')
+    throw new AppError(
+      'AUTH_REQUIRED',
+      `Instagram ปิดกั้นการดูโปรไฟล์ @${cleanUsername} สำหรับคำขอสาธารณะ`,
+      403,
+      'Instagram จำกัดการเข้าถึงโปรไฟล์แบบไม่ล็อกอิน ลองใช้ลิงก์โพสต์หรือ Reels สาธารณะ หรือใส่ Instagram Cookie ในระบบเพื่อปลดล็อกได้ครับ'
+    )
   }
 
   if (!displayName || !displayName.trim()) {

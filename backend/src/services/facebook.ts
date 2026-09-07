@@ -83,6 +83,16 @@ export async function getFacebookInfo(
           .trim()
       }
 
+      // ตรวจจับกรณี Facebook redirect ไปยังหน้า Login
+      if (displayName.includes('เข้าสู่ระบบ') || displayName.toLowerCase().includes('log in') || displayName.toLowerCase().includes('login')) {
+        throw new AppError(
+          'AUTH_REQUIRED',
+          'Facebook ปิดกั้นการดูโปรไฟล์นี้สำหรับคำขอสาธารณะ (ต้องเข้าสู่ระบบ Facebook)',
+          403,
+          'Facebook ไม่อนุญาตให้ดึงข้อมูลโปรไฟล์แบบไม่ล็อกอิน ลองใช้ลิงก์วิดีโอหรือ Reels สาธารณะแทนครับ'
+        )
+      }
+
       // สำหรับ Photo Posts: ค้นหา CDN รูปภาพขนาดใหญ่ใน HTML
       if (finalUrlType === 'photo') {
         const cdnMatches = Array.from(html.matchAll(/"(https:\\?\/\\?\/[^"]+\.fna\.fbcdn\.net[^"]+)"/g))
@@ -168,13 +178,8 @@ export async function getFacebookInfo(
     mediaUrl = ogImageUrl
   }
 
-  // If literally nothing found, and it's a profile, try graph as last resort
-  if (!mediaUrl && finalUrlType === 'profile') {
-    mediaUrl = `https://graph.facebook.com/${cleanId}/picture?width=2048&height=2048`
-  }
-
   if (!mediaUrl) {
-    throw new AppError('NOT_FOUND', `ไม่สามารถดึงรูปภาพหรือโปรไฟล์ Facebook ได้`, 404, 'โปรดตรวจสอบว่าเนื้อหานี้ถูกตั้งเป็นสาธารณะ (Public)')
+    throw new AppError('AUTH_REQUIRED', `ไม่สามารถดึงรูปภาพหรือโปรไฟล์ Facebook นี้ได้`, 403, 'Facebook บล็อกการเข้าถึงโปรไฟล์แบบไม่ล็อกอิน ลองใช้ลิงก์วิดีโอหรือ Reels สาธารณะแทนครับ')
   }
 
   const option = { id: 'media_hd', label: 'ดาวน์โหลดรูปภาพ (HD)', format: 'jpg', quality: 'HD' }
