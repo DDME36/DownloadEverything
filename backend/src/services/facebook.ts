@@ -9,12 +9,18 @@ const UA_MOBILE = 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_4 like Mac OS X) AppleW
 const UA_DESKTOP = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36'
 const UA_CRAWLER = 'facebookexternalhit/1.1 (+http://www.facebook.com/externalhit_uatext.php)'
 
+function isFacebookLoginWall(html: string): boolean {
+  const title = html.match(/<title[^>]*>([^<]*)/i)?.[1] || ''
+  return /log in to facebook|เข้าสู่ระบบ facebook/i.test(title) ||
+    /<form\b[^>]*\bid\s*=\s*["']login_form["']/i.test(html)
+}
+
 /**
  * ดึง Cookie ของ Facebook จาก cookies.txt หรือ Environment Variable
  */
 async function getFacebookCookie(): Promise<string> {
   const envCookie = process.env.FACEBOOK_COOKIE
-  if (envCookie) return envCookie
+  if (envCookie?.trim()) return envCookie.trim()
 
   const cookiesPath = getCookiesPath() || join(getDataDir(), 'cookies', 'cookies.txt')
   try {
@@ -24,13 +30,17 @@ async function getFacebookCookie(): Promise<string> {
       const lines = text.split('\n')
       const cookies: string[] = []
       for (const line of lines) {
-        if (line.startsWith('#') || !line.trim()) continue
-        const parts = line.split('\t')
+        const trimmed = line.trim().replace(/^#HttpOnly_/, '')
+        if (trimmed.startsWith('#') || !trimmed) continue
+        const parts = trimmed.split('\t')
         if (parts.length >= 7) {
           const domain = parts[0]
           const name = parts[5]
           const value = parts[6]?.trim()
-          if ((domain.includes('facebook.com') || domain.includes('.facebook.com')) && name && value) {
+          const host = domain.replace(/^\./, '').toLowerCase()
+          const expires = Number(parts[4])
+          if ((host === 'facebook.com' || host.endsWith('.facebook.com')) &&
+              (expires === 0 || expires > Date.now() / 1000) && name && value) {
             cookies.push(`${name}=${value}`)
           }
         }
@@ -108,18 +118,12 @@ export async function getFacebookInfo(
 
     let html = ''
     let isLoginWall = false
+    log('info', 'Facebook: desktop response', { status: resp.status, cookiePresent: !!fbCookie })
 
     if (resp.ok) {
       html = await resp.text()
-      const lower = html.toLowerCase()
-      if (
-        lower.includes('id="login_form"') ||
-        lower.includes('name="login"') ||
-        lower.includes('เข้าสู่ระบบ facebook') ||
-        lower.includes('log in to facebook') ||
-        lower.includes('action="/login/') ||
-        lower.includes('/login.php')
-      ) {
+      // Public profiles can contain login links. A login link alone is not a wall.
+      if (isFacebookLoginWall(html)) {
         isLoginWall = true
         log('warn', `Facebook: Desktop request encountered login wall for "${cleanId}"`)
       }
@@ -139,10 +143,14 @@ export async function getFacebookInfo(
         headers: crawlerHeaders,
         signal,
       })
+      log('info', 'Facebook: crawler response', { status: crawlerResp.status, cookiePresent: !!fbCookie })
       if (crawlerResp.ok) {
-        html = await crawlerResp.text()
-        resp = crawlerResp
-        isLoginWall = false
+        const crawlerHtml = await crawlerResp.text()
+        if (!isFacebookLoginWall(crawlerHtml)) {
+          html = crawlerHtml
+          resp = crawlerResp
+          isLoginWall = false
+        }
       }
     }
 
@@ -166,9 +174,9 @@ export async function getFacebookInfo(
           .map(m => decodeAllHtmlEntities(m[0].replace(/\\/g, '')))
 
         if (profileMatches.length > 0) {
-          // เลือกลิงก์ที่มีขนาดสูงสุด (mx1200x1200 หรือ s960x960) และตัด crop parameters ออก
+          // Select a published size; never modify a signed CDN URL.
           const hdCandidate = profileMatches.find(u => u.includes('mx1200x1200') || u.includes('s960x960') || u.includes('s720x720')) || profileMatches[0]
-          mediaUrl = hdCandidate.replace(/&ctp=s\d+x\d+/g, '').replace(/ctp=s\d+x\d+&?/g, '') || hdCandidate
+          mediaUrl = hdCandidate
         }
 
         // ดึงรูปหน้าปก (Cover Photo) หมวด /t39.30808-6/
@@ -177,7 +185,7 @@ export async function getFacebookInfo(
 
         if (coverMatches.length > 0) {
           const hdCover = coverMatches.find(u => u.includes('s960x960') || u.includes('mx750')) || coverMatches[0]
-          coverImageUrl = hdCover.replace(/&ctp=s\d+x\d+/g, '').replace(/ctp=s\d+x\d+&?/g, '') || hdCover
+          coverImageUrl = hdCover
         }
       }
 
@@ -194,7 +202,7 @@ export async function getFacebookInfo(
           )
           if (validHdImages.length > 0) {
             const chosen = validHdImages[0]
-            mediaUrl = chosen.replace(/&ctp=s\d+x\d+/g, '').replace(/ctp=s\d+x\d+&?/g, '') || chosen
+            mediaUrl = chosen
           }
         }
       }
@@ -203,7 +211,6 @@ export async function getFacebookInfo(
       const ogMatch = normalizedHtml.match(/<meta\s+property="og:image"\s+content="([^"]+)"/i)
       if (ogMatch) {
         ogImageUrl = decodeAllHtmlEntities(ogMatch[1])
-        ogImageUrl = ogImageUrl.replace(/&ctp=s\d+x\d+/g, '').replace(/ctp=s\d+x\d+&?/g, '') || ogImageUrl
       }
     }
   } catch (e) {
@@ -293,10 +300,10 @@ export async function downloadFacebook(
   let imageUrl = ''
   if (cachedMeta) {
     if (optionId === 'cover_hd') {
-      const coverItem = cachedMeta.items?.find(i => i.id === 'item_2' || i.title?.includes('(Cover)'))
+      const coverItem = cachedMeta.items?.find(i => i.options.some(o => o.id === 'cover_hd'))
       imageUrl = coverItem?.url || coverItem?.thumbnail || ''
     }
-    if (!imageUrl) {
+    if (!imageUrl && optionId !== 'cover_hd') {
       imageUrl = cachedMeta.thumbnail || cachedMeta.items?.[0]?.url || cachedMeta.items?.[0]?.thumbnail || ''
     }
   }
@@ -305,8 +312,8 @@ export async function downloadFacebook(
   if (!imageUrl) {
     const info = await getFacebookInfo(url, cleanId, contentType, signal)
     if (optionId === 'cover_hd') {
-      const coverItem = info.items?.find(i => i.id === 'item_2' || i.title?.includes('(Cover)'))
-      imageUrl = coverItem?.url || coverItem?.thumbnail || info.thumbnail || ''
+      const coverItem = info.items?.find(i => i.options.some(o => o.id === 'cover_hd'))
+      imageUrl = coverItem?.url || coverItem?.thumbnail || ''
     } else {
       imageUrl = info.thumbnail || info.items?.[0]?.thumbnail || ''
     }
@@ -322,13 +329,17 @@ export async function downloadFacebook(
     } catch {}
   }
 
-  log('info', `Facebook: streaming → ${imageUrl.substring(0, 120)}...`)
+  log('info', 'Facebook: downloading image', { host: new URL(imageUrl).hostname, cached: !!cachedMeta, option: optionId })
 
   const imgResp = await safeFetch(imageUrl, { 
     headers: { 'User-Agent': UA_DESKTOP }, 
     signal 
   })
   if (!imgResp.ok) throw new AppError('DOWNLOAD_FAILED', `ดาวน์โหลดรูปภาพไม่สำเร็จ (HTTP ${imgResp.status})`)
+  if (!imgResp.headers.get('content-type')?.startsWith('image/')) {
+    await imgResp.body?.cancel()
+    throw new AppError('DOWNLOAD_FAILED', 'Facebook CDN ไม่ได้ส่งไฟล์รูปภาพกลับมา', 502)
+  }
   if (!imgResp.body) throw new AppError('DOWNLOAD_FAILED', 'ไม่สามารถอ่านข้อมูลรูปภาพได้')
 
   onProgress?.(100, 'ready')

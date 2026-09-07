@@ -1,5 +1,6 @@
-import { mkdir, appendFile } from 'node:fs/promises'
+import { mkdir, appendFile, writeFile, chmod } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
+import { getProxyForUrl } from './networkProxy'
 
 let logsDirReady = false
 const backendRoot = resolve(import.meta.dir, '../../')
@@ -130,6 +131,7 @@ let cachedCookiesPath: string | null = null
  * โหลดคุกกี้ของ YouTube จาก Environment Variable หรือไฟล์เครื่อง
  */
 export async function initCookies(): Promise<void> {
+  cachedCookiesPath = null
   const cookiesText = process.env.YT_DLP_COOKIES_TEXT
   const dataDir = await ensureDataDir()
   const cookiesDir = join(dataDir, 'cookies')
@@ -143,9 +145,9 @@ export async function initCookies(): Promise<void> {
     try {
       await Bun.write(persistentCookiesPath, cookiesText.trim())
       cachedCookiesPath = persistentCookiesPath
-      log('info', `✅ YouTube Cookies initialized at persistent location: ${persistentCookiesPath}`)
+      log('info', 'Cookies initialized from YT_DLP_COOKIES_TEXT')
     } catch (err) {
-      log('error', `Failed to initialize YouTube Cookies: ${(err as Error).message}`)
+      log('error', `Failed to initialize cookies: ${(err as Error).message}`)
     }
   } else {
     // เช็คกรณีใส่ไฟล์คุกกี้ไว้ตรงๆ
@@ -163,6 +165,35 @@ export async function initCookies(): Promise<void> {
       log('info', `✅ Local cookies.txt found in root directory`)
     }
   }
+
+  // Materialize environment cookies for gallery-dl and yt-dlp too, without
+  // exposing session values in process arguments or changing the source file.
+  const sessions = [
+    ['instagram.com', process.env.INSTAGRAM_COOKIE],
+    ['facebook.com', process.env.FACEBOOK_COOKIE],
+  ].filter((entry): entry is [string, string] => !!entry[1]?.trim())
+  if (sessions.length) {
+    let lines = cachedCookiesPath ? (await Bun.file(cachedCookiesPath).text()).split(/\r?\n/) : ['# Netscape HTTP Cookie File']
+    for (const [domain, header] of sessions) {
+      if (/[\r\n\t]/.test(header)) throw new Error(`Cookie header for ${domain} must be a single line`)
+      lines = lines.filter(line => {
+        const host = line.replace(/^#HttpOnly_/, '').split('\t')[0].replace(/^\./, '').toLowerCase()
+        return host !== domain && !host.endsWith('.' + domain)
+      })
+      for (const pair of header.split(';')) {
+        const equals = pair.indexOf('=')
+        if (equals < 1) continue
+        const name = pair.slice(0, equals).trim()
+        const value = pair.slice(equals + 1).trim()
+        if (name && value) lines.push(`.${domain}\tTRUE\t/\tTRUE\t0\t${name}\t${value}`)
+      }
+    }
+    const runtimePath = join(cookiesDir, 'runtime-cookies.txt')
+    await writeFile(runtimePath, lines.join('\n') + '\n', { mode: 0o600 })
+    await chmod(runtimePath, 0o600)
+    cachedCookiesPath = runtimePath
+    log('info', 'Session cookies available to HTTP and external downloaders', { platforms: sessions.map(([domain]) => domain) })
+  }
 }
 
 export function getCookiesPath(): string | null {
@@ -178,8 +209,10 @@ export function getYtDlpArgs(baseArgs: string[]): string[] {
   const args = baseArgs.slice(1)
   
   // แทรก Proxy
-  if (process.env.YT_DLP_PROXY) {
-    args.push('--proxy', process.env.YT_DLP_PROXY)
+  const targetUrl = args.find(arg => /^https?:\/\//i.test(arg))
+  const proxy = targetUrl ? getProxyForUrl(targetUrl) : process.env.YT_DLP_PROXY
+  if (proxy !== undefined) {
+    args.push('--proxy', proxy)
   }
   
   // แทรก Cookies

@@ -14,7 +14,7 @@ import { unlink } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
 import type { ApiResponse, DownloadResult, DownloadStage } from './types'
 import { DirectMediaAdapter } from './adapters/directMedia'
-import { GalleryDlAdapter } from './adapters/galleryDl'
+import { GalleryDlAdapter, checkGalleryDl } from './adapters/galleryDl'
 import {
   parseAndValidateUrl,
   isAllowedImageProxyHost,
@@ -238,6 +238,7 @@ export const app = new Elysia()
         ytDlp: ytdlpOk,
         deno: denoOk,
         ffmpeg: ffmpegOk,
+        galleryDl: await checkGalleryDl(),
       },
       concurrency: {
         analyzing: analyzeSemaphore.getActiveCount(),
@@ -330,7 +331,8 @@ export const app = new Elysia()
     }
 
     // 2. ตรวจสอบจาก Cache ก่อนดึงข้อมูลหนัก
-    const cachedData = mediaCache.get(url)
+    const detected = detectUrl(url)
+    const cachedData = mediaCache.get(detected.originalUrl)
     if (cachedData) {
       return { success: true, data: cachedData }
     }
@@ -342,14 +344,16 @@ export const app = new Elysia()
     const timer = setTimeout(() => abortCtrl.abort(), MAX_ANALYZE_DURATION_MS)
 
     try {
-      const detected = detectUrl(url)
       log('info', `Analyzing (${clientIp}): ${detected.platform} → ${url}`)
 
       let data: any
-      if ((detected.contentType === 'album' || (detected.platform === 'instagram' && detected.contentType === 'post')) && galleryDlAdapter.canHandle(detected.originalUrl, detected.platform)) {
+      if ((detected.contentType === 'album' || (detected.platform === 'instagram' && detected.contentType === 'post')) &&
+          await checkGalleryDl() && galleryDlAdapter.canHandle(detected.originalUrl, detected.platform)) {
         try {
           data = await galleryDlAdapter.getInfo(detected.originalUrl, abortCtrl.signal)
-        } catch {}
+        } catch (error) {
+          log('warn', 'Gallery extraction failed; trying video extractor', { code: error instanceof AppError ? error.code : 'EXTRACT_FAILED' })
+        }
       }
 
       if (!data) {
@@ -420,7 +424,7 @@ export const app = new Elysia()
 
       // บันทึก Cache (10 นาที)
       if (data) {
-        mediaCache.set(url, data)
+        mediaCache.set(detected.originalUrl, data)
       }
 
       return { success: true, data }

@@ -5,6 +5,7 @@ import { ensureTempDir, getCookiesPath } from '../utils/helpers'
 import { killProcessTree, cleanupPartialFiles } from '../utils/process'
 import { join } from 'node:path'
 import { readdir, rm } from 'node:fs/promises'
+import { getProxyForUrl } from '../utils/networkProxy'
 
 let galleryDlInstalled = false
 let galleryDlCommand: string[] | null = null
@@ -98,8 +99,10 @@ export class GalleryDlAdapter implements DownloaderAdapter {
 
     const cookiesPath = getCookiesPath()
     const cookieArgs = cookiesPath && (await Bun.file(cookiesPath).exists()) ? ['--cookies', cookiesPath] : []
+    const proxy = getProxyForUrl(url)
+    const proxyArgs = proxy !== undefined ? ['--proxy', proxy] : []
 
-    const proc = Bun.spawn([...cmd, ...cookieArgs, '-j', '--no-download', url], {
+    const proc = Bun.spawn([...cmd, ...cookieArgs, ...proxyArgs, '-j', '--no-download', url], {
       stdout: 'pipe',
       stderr: 'pipe',
     })
@@ -134,7 +137,7 @@ export class GalleryDlAdapter implements DownloaderAdapter {
     try {
       const parsedAll = JSON.parse(output.trim())
       if (Array.isArray(parsedAll)) {
-        rawObjects = parsedAll
+        rawObjects = typeof parsedAll[0] === 'number' ? [parsedAll] : parsedAll
       } else if (typeof parsedAll === 'object' && parsedAll !== null) {
         rawObjects = [parsedAll]
       }
@@ -150,21 +153,19 @@ export class GalleryDlAdapter implements DownloaderAdapter {
     let index = 1
     for (const itemData of rawObjects) {
       // โครงสร้างของ gallery-dl -j:
-      // Category 2: [2, url, metadata] -> ไฟล์สื่อ (รูปภาพ/วิดีโอ)
-      // Category 3: [3, metadata] -> ไดเรกทอรี / ข้อมูลอัลบั้ม (ต้องข้าม เพื่อไม่ให้ url กลายเป็น [object Object])
+      // Message.Url = 3; Message.Directory = 2; Message.Queue = 6.
+      // Only download URL messages represent files; queued URLs are other pages.
       // หรือ Object ธรรมดา: { url: ... }
       let mediaUrl = ''
       if (Array.isArray(itemData)) {
-        if (itemData[0] === 2 && typeof itemData[1] === 'string') {
-          mediaUrl = itemData[1]
-        } else if (typeof itemData[1] === 'string' && itemData[1].startsWith('http')) {
+        if (itemData[0] === 3 && typeof itemData[1] === 'string') {
           mediaUrl = itemData[1]
         }
       } else if (typeof itemData === 'object' && itemData !== null) {
         mediaUrl = itemData.url || (Array.isArray(itemData.urls) ? itemData.urls[0] : '')
       }
 
-      if (!mediaUrl || typeof mediaUrl !== 'string' || !mediaUrl.startsWith('http')) {
+      if (!mediaUrl || typeof mediaUrl !== 'string' || !/^https?:\/\//i.test(mediaUrl)) {
         continue
       }
 
@@ -230,12 +231,15 @@ export class GalleryDlAdapter implements DownloaderAdapter {
 
     const cookiesPath = getCookiesPath()
     const cookieArgs = cookiesPath && (await Bun.file(cookiesPath).exists()) ? ['--cookies', cookiesPath] : []
+    const proxy = getProxyForUrl(url)
+    const proxyArgs = proxy !== undefined ? ['--proxy', proxy] : []
 
     onProgress?.(10, 'downloading')
 
     const proc = Bun.spawn([
       ...cmd,
       ...cookieArgs,
+      ...proxyArgs,
       '--destination', outDir,
       ...extraArgs,
       url

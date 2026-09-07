@@ -1,5 +1,6 @@
 import { lookup } from 'node:dns/promises'
 import { AppError } from './errors'
+import { getProxyForUrl } from './networkProxy'
 
 /**
  * ตรวจสอบว่า IP address เป็น Private IP, Loopback, Link-Local หรือ Cloud Metadata IP หรือไม่
@@ -216,21 +217,23 @@ export async function assertSafePublicDestination(hostname: string): Promise<voi
  */
 export async function safeFetch(
   input: string | URL,
-  init?: RequestInit,
+  init?: RequestInit & { proxy?: string },
   maxRedirects: number = 5
 ): Promise<Response> {
   let currentUrl = typeof input === 'string' ? input : input.href
   let hops = 0
+  const headers = new Headers(init?.headers)
 
   while (hops <= maxRedirects) {
     const parsed = parseAndValidateUrl(currentUrl)
     await assertSafePublicDestination(parsed.hostname)
 
-    const proxyUrl = (init as any)?.proxy || process.env.HTTP_PROXY || process.env.HTTPS_PROXY || process.env.ALL_PROXY
+    const proxyUrl = init?.proxy ?? getProxyForUrl(parsed)
     const reqInit: RequestInit & { proxy?: string } = {
       ...init,
+      headers,
       redirect: 'manual', // ไม่อนุญาตให้ติดตาม redirect อัตโนมัติ
-      ...(proxyUrl ? { proxy: proxyUrl } : {}),
+      ...(proxyUrl !== undefined ? { proxy: proxyUrl } : {}),
     }
 
     const response = await fetch(parsed.href, reqInit as RequestInit)
@@ -250,11 +253,17 @@ export async function safeFetch(
       // ตีความ Relative URL ให้กลายเป็น Absolute URL ตาม URL ปัจจุบัน
       try {
         const nextUrl = new URL(location, currentUrl)
+        if (nextUrl.origin !== parsed.origin) {
+          headers.delete('cookie')
+          headers.delete('authorization')
+          headers.delete('proxy-authorization')
+        }
         currentUrl = nextUrl.href
       } catch {
         throw new AppError('INVALID_REDIRECT', 'URL การเปลี่ยนเส้นทางไม่ถูกต้อง', 400)
       }
 
+      await response.body?.cancel()
       continue
     }
 

@@ -127,6 +127,8 @@ export async function getInstagramInfo(
         signal,
       })
 
+      log('info', 'Instagram: profile API response', { status: apiResp.status, cookiePresent: !!igCookie })
+
       if (apiResp.ok) {
         log('info', `Instagram: web_profile_info → HTTP 200 (HD profile available)`)
         const data = await apiResp.json() as any
@@ -152,6 +154,10 @@ export async function getInstagramInfo(
         }
       } else {
         const errText = await apiResp.text().catch(() => '')
+        if (apiResp.status === 429 || /please wait a few minutes|too many requests/i.test(errText)) {
+          throw new AppError('RATE_LIMITED', 'Instagram จำกัดคำขอจาก IP หรือ session ของเซิร์ฟเวอร์', 429,
+            'หยุดลองซ้ำชั่วคราว แล้วตรวจ session และเส้นทางเครือข่ายบนเซิร์ฟเวอร์ ข้อความนี้ไม่ได้หมายความว่าบัญชีเป็น Private')
+        }
         if (errText.includes('challenge_required') || errText.includes('checkpoint_required')) {
           throw new AppError(
             'AUTH_REQUIRED',
@@ -184,6 +190,7 @@ export async function getInstagramInfo(
         headers: reqHeaders,
         signal,
       })
+      log('info', 'Instagram: profile HTML response', { status: resp.status, cookiePresent: !!igCookie })
       if (resp.ok) {
         const html = await resp.text()
 
@@ -311,13 +318,17 @@ export async function downloadInstagram(
     } catch {}
   }
 
-  log('info', `Instagram: streaming → ${imageUrl.substring(0, 120)}...`)
+  log('info', 'Instagram: downloading image', { host: new URL(imageUrl).hostname, cached: !!cachedMeta })
 
   const imgResp = await safeFetch(imageUrl, { 
     headers: { 'User-Agent': UA_DESKTOP }, 
     signal 
   })
   if (!imgResp.ok) throw new AppError('DOWNLOAD_FAILED', `HTTP ${imgResp.status}`)
+  if (!imgResp.headers.get('content-type')?.startsWith('image/')) {
+    await imgResp.body?.cancel()
+    throw new AppError('DOWNLOAD_FAILED', 'Instagram CDN ไม่ได้ส่งไฟล์รูปภาพกลับมา', 502)
+  }
   if (!imgResp.body) throw new AppError('DOWNLOAD_FAILED', 'ไม่สามารถอ่านข้อมูลรูปภาพได้')
 
   onProgress?.(100, 'ready')
