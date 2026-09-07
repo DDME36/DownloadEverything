@@ -187,26 +187,20 @@ export async function getInstagramInfo(
       if (resp.ok) {
         const html = await resp.text()
 
-        // 1. ลองดึงผ่าน Helper
-        profilePicUrl = profileImageFromHtml(html) || ''
-        if (profilePicUrl) resolution = 'รูปใหญ่จากข้อมูลต้นทาง'
-
-        // 2. ลองค้นหาใน script tags
-        if (!profilePicUrl) {
-          const scriptMatches = Array.from(html.matchAll(/profile_pic_url(_hd)?["']\s*:\s*["']([^"']+)["']/gi))
-          for (const m of scriptMatches) {
-            const rawUrl = m[2].replace(/\\u0026/g, '&').replace(/\\/g, '')
-            if (
-              !rawUrl.includes('rsrc.php') && 
-              !rawUrl.includes('instagram-logo') && 
-              !rawUrl.includes('static/images')
-            ) {
-              profilePicUrl = rawUrl
-              resolution = 'ความละเอียดจาก Instagram'
-              break
-            }
-          }
+        // 1. ตรวจสอบว่าหน้าเว็บเป็น Error Page หรือ Private หรือไม่
+        if (html.includes('PolarisErrorRoot') || html.includes('httpErrorPage')) {
+          log('warn', `Instagram: profile @${cleanUsername} returned error page (may be private or not found)`)
+          throw new AppError(
+            'NOT_FOUND',
+            `ไม่พบรูปโปรไฟล์ @${cleanUsername} (บัญชีนี้ถูกตั้งเป็นส่วนตัว Private หรือไม่มีผู้ใช้นี้)`,
+            404,
+            'หากเป็นบัญชีส่วนตัว บัญชี Instagram ในคุกกี้ต้องได้รับอนุมัติให้ติดตามก่อนจึงจะเข้าถึงได้ครับ'
+          )
         }
+
+        // 2. ดึงรูปโปรไฟล์โดยเจาะจงเฉพาะเป้าหมาย cleanUsername (ป้องกันการได้รูปของ viewer / เจ้าของคุกกี้)
+        profilePicUrl = profileImageFromHtml(html, cleanUsername) || ''
+        if (profilePicUrl) resolution = 'รูปใหญ่จากข้อมูลต้นทาง'
 
         // 3. ตรวจสอบ og:image
         const ogMatch = html.match(/<meta\s+property="og:image"\s+content="([^"]+)"/i)
@@ -224,6 +218,7 @@ export async function getInstagramInfo(
         }
       }
     } catch (e) {
+      if (e instanceof AppError) throw e
       log('warn', `Instagram: HTML scrape failed -> ${(e as Error).message}`)
     }
   }
