@@ -4,6 +4,7 @@ import { log, decodeAllHtmlEntities, getCookiesPath, getDataDir } from '../utils
 import { safeFetch } from '../utils/security'
 import { getGenericInfo, downloadGeneric } from './generic'
 import { join } from 'path'
+import sharp from 'sharp'
 
 const UA_MOBILE = 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_4 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Mobile/15E148 Safari/604.1'
 const UA_DESKTOP = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36'
@@ -14,8 +15,11 @@ function isFacebookLoginWall(html: string): boolean {
   if (/log in to facebook|เข้าสู่ระบบ facebook|you must log in|checkpoint/i.test(title)) return true
   if (/<form\b[^>]*\bid\s*=\s*["']login_form["']/i.test(html)) return true
   if (/id="login_form"|name="login_form"|action="\/login\.php"/i.test(html)) return true
-  if (html.includes('id="checkpointSubmitButton"') || html.includes('login_attempt')) return true
   return false
+}
+
+function decodeUnicodeEscapes(str: string): string {
+  return str.replace(/\\u([0-9a-fA-F]{4})/g, (_, code) => String.fromCharCode(parseInt(code, 16)))
 }
 
 /**
@@ -105,8 +109,6 @@ export async function getFacebookInfo(
   const finalUrlType = (contentType === 'image' || url.includes('/photo') || url.includes('/posts/')) ? 'photo' : 'profile'
 
   log('info', `Facebook: processing "${cleanId}" as ${finalUrlType}`)
-
-  let coverImageUrl = ''
 
   try {
     const targetUrl = finalUrlType === 'photo' ? url : `https://www.facebook.com/${cleanId}`
@@ -199,42 +201,96 @@ export async function getFacebookInfo(
     if (resp.ok && !isLoginWall) {
       const normalizedHtml = html.replace(/\\\//g, '/')
 
-      // Extract Title
-      const titleMatch = normalizedHtml.match(/<title[^>]*>([^<]+)<\/title>/i)
-      if (titleMatch) {
-        const rawTitle = decodeAllHtmlEntities(titleMatch[1])
-        if (!rawTitle.includes('เข้าสู่ระบบ Facebook') && !rawTitle.toLowerCase().includes('log in to facebook')) {
-          displayName = rawTitle
-            .replace(/(\s*[|\-–—]\s*Facebook.*$|\s*•\s*Facebook.*$)/i, '')
-            .trim()
+      // Extract Display Name from Relay store or Comet header
+      const ownerMatch = normalizedHtml.match(/"profile_owner":\{[^}]*"name":"([^"]+)"/) ||
+                         normalizedHtml.match(/"owning_profile":\{[^}]*"name":"([^"]+)"/) ||
+                         normalizedHtml.match(/"user":\{"__isProfile":"User","name":"([^"]+)"/)
+
+      if (ownerMatch) {
+        const decoded = decodeUnicodeEscapes(decodeAllHtmlEntities(ownerMatch[1])).trim()
+        if (decoded && !/^(facebook|log in to facebook|เข้าสู่ระบบ facebook|โปรไฟล์ของคุณ|your profile)$/i.test(decoded)) {
+          displayName = decoded
+        }
+      }
+
+      // Fallback to <title>
+      if (!displayName || displayName === cleanId) {
+        const titleMatch = normalizedHtml.match(/<title[^>]*>([^<]+)<\/title>/i)
+        if (titleMatch) {
+          const rawTitle = decodeAllHtmlEntities(titleMatch[1])
+          if (!rawTitle.includes('เข้าสู่ระบบ Facebook') && !rawTitle.toLowerCase().includes('log in to facebook') && rawTitle.trim() !== 'Facebook') {
+            displayName = rawTitle
+              .replace(/(\s*[|\-–—]\s*Facebook.*$|\s*•\s*Facebook.*$)/i, '')
+              .trim()
+          }
         }
       }
 
       // 1. ดึงรูปโปรไฟล์โดยตรงจาก CDN URL หมวด /t39.30808-1/ (รหัสเฉพาะของรูปโปรไฟล์ Facebook)
       if (finalUrlType === 'profile') {
-        const profileMatches = Array.from(normalizedHtml.matchAll(/https:\/\/scontent[^"'<>]+\.fbcdn\.net[^"'<>]*\/t39\.30808-1\/[^"'<>]+/g))
-          .map(m => decodeAllHtmlEntities(m[0].replace(/\\/g, '')))
-
-        if (profileMatches.length > 0) {
-          // Select a published size; never modify a signed CDN URL.
-          const hdCandidate = profileMatches.find(u => u.includes('mx1200x1200') || u.includes('s960x960') || u.includes('s720x720')) || profileMatches[0]
-          mediaUrl = hdCandidate
+        // Strategy 1: Search for main profile avatar SVG <image> (standard Facebook profile header uses 168px, 160px, or 132px)
+        const svgImageMatch = normalizedHtml.match(/<image\b[^>]+style="[^"]*(?:168|160|132)px[^"]*"[^>]+(?:xlink:href|href)="([^"]+)"/i) ||
+                              normalizedHtml.match(/<image\b[^>]+(?:xlink:href|href)="([^"]+)"[^>]+style="[^"]*(?:168|160|132)px[^"]*"/i)
+        if (svgImageMatch) {
+          mediaUrl = decodeAllHtmlEntities(svgImageMatch[1].replace(/&amp;/g, '&'))
         }
 
-        // ดึงรูปหน้าปก (Cover Photo) หมวด /t39.30808-6/
-        const coverMatches = Array.from(normalizedHtml.matchAll(/https:\/\/scontent[^"'<>]+\.fbcdn\.net[^"'<>]*\/t39\.30808-6\/[^"'<>]+/g))
-          .map(m => decodeAllHtmlEntities(m[0].replace(/\\/g, '')))
+        // Strategy 2: If displayName is known, check for SVG with aria-label matching profile name
+        if (!mediaUrl && displayName && displayName !== cleanId) {
+          const escapedName = displayName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+          const ariaSvgMatch = normalizedHtml.match(new RegExp(`<svg\\b[^>]*aria-label="${escapedName}"[^>]*>[\\s\\S]*?<image\\b[^>]+(?:xlink:href|href)="([^"]+)"`, 'i'))
+          if (ariaSvgMatch) {
+            mediaUrl = decodeAllHtmlEntities(ariaSvgMatch[1].replace(/&amp;/g, '&'))
+          }
+        }
 
-        if (coverMatches.length > 0) {
-          const hdCover = coverMatches.find(u => u.includes('s960x960') || u.includes('mx750')) || coverMatches[0]
-          coverImageUrl = hdCover
+        // Strategy 3: Check Relay store profile picture fields
+        if (!mediaUrl) {
+          const relayMatch = normalizedHtml.match(/"profilePic(?:160|Large)"[^{}]*\{[^{}]*"uri":"(https:[^"]+)"/) ||
+                             normalizedHtml.match(/"profile_picture_uri":"(https:[^"]+)"/) ||
+                             normalizedHtml.match(/"profile_picture_for_sticky_bar"[^{}]*\{[^{}]*"uri":"(https:[^"]+)"/)
+          if (relayMatch) {
+            mediaUrl = decodeAllHtmlEntities(relayMatch[1].replace(/&amp;/g, '&'))
+          }
+        }
+
+        // Strategy 4: Find all /t39.30808-1/ matches, filter out viewer avatars, and score by resolution
+        if (!mediaUrl) {
+          const profileMatches = Array.from(normalizedHtml.matchAll(/https:\/\/scontent[^"'<>]+\.fbcdn\.net[^"'<>]*\/t39\.30808-1\/[^"'<>\s]+/g))
+            .map(m => decodeAllHtmlEntities(m[0].replace(/\\/g, '').replace(/&amp;/g, '&')))
+
+          if (profileMatches.length > 0) {
+            const viewerIdMatch = normalizedHtml.match(/"viewerID":"(\d+)"/)
+            const viewerId = viewerIdMatch ? viewerIdMatch[1] : ''
+
+            const scoredMatches = profileMatches.map(u => {
+              let score = 0
+              const mx = u.match(/cstp=mx(\d+)x(\d+)/)
+              const w = mx ? parseInt(mx[1], 10) : 0
+              const h = mx ? parseInt(mx[2], 10) : 0
+              if (w >= 720 || h >= 720) score += 100
+              else if (w >= 300 || h >= 300) score += 50
+              else if (w > 0) score += 10
+
+              if (w > 0 && w <= 188 && h <= 188) score -= 60
+              if (u.includes('s40x40') || u.includes('s32x32') || u.includes('s24x24') || u.includes('s60x60')) score -= 40
+              if (viewerId && u.includes(viewerId)) score -= 100
+              return { u, score }
+            }).sort((a, b) => b.score - a.score)
+
+            if (scoredMatches[0] && scoredMatches[0].score > -50) {
+              mediaUrl = scoredMatches[0].u
+            } else {
+              mediaUrl = profileMatches[0]
+            }
+          }
         }
       }
 
       // 2. สำหรับ Photo Posts หรือกรณีทั่วไป: ค้นหา CDN รูปภาพขนาดใหญ่ใน HTML
       if (finalUrlType === 'photo' || !mediaUrl) {
         const cdnMatches = Array.from(normalizedHtml.matchAll(/https:\/\/scontent[^"'<>]+\.fbcdn\.net[^"'<>]*\/t39\.30808-6\/[^"'<>]+/g))
-          .map(m => decodeAllHtmlEntities(m[0].replace(/\\/g, '')))
+          .map(m => decodeAllHtmlEntities(m[0].replace(/\\/g, '').replace(/&amp;/g, '&')))
         
         if (cdnMatches.length > 0) {
           const validHdImages = cdnMatches.filter(u => 
@@ -284,20 +340,6 @@ export async function getFacebookInfo(
       ],
     }
   ]
-
-  if (coverImageUrl && coverImageUrl !== mediaUrl) {
-    options.push({ id: 'cover_hd', label: 'ดาวน์โหลดรูปหน้าปก (Cover HD)', format: 'jpg', quality: 'HD' })
-    items.push({
-      id: 'item_2',
-      kind: 'image',
-      title: `${displayName || cleanId} (Cover)`,
-      thumbnail: coverImageUrl,
-      url: coverImageUrl,
-      options: [
-        { id: 'cover_hd', label: 'ดาวน์โหลดรูปหน้าปก (Cover HD)', format: 'jpg', quality: 'HD' }
-      ],
-    })
-  }
 
   return {
     platform: 'facebook',
@@ -382,15 +424,42 @@ export async function downloadFacebook(
     await imgResp.body?.cancel()
     throw new AppError('DOWNLOAD_FAILED', 'Facebook CDN ไม่ได้ส่งไฟล์รูปภาพกลับมา', 502)
   }
-  if (!imgResp.body) throw new AppError('DOWNLOAD_FAILED', 'ไม่สามารถอ่านข้อมูลรูปภาพได้')
+  const arrayBuf = await imgResp.arrayBuffer()
+  let imageBuffer = Buffer.from(arrayBuf)
 
-  onProgress?.(100, 'ready')
   const isCover = optionId === 'cover_hd'
   const isProfile = contentType === 'profile' || url.includes('profile.php') || (!url.includes('/photo') && !url.includes('/posts/'))
+
+  if (isProfile) {
+    try {
+      const meta = await sharp(imageBuffer).metadata()
+      const width = meta.width || 0
+      const height = meta.height || 0
+
+      // หากภาพมีขนาดเล็กกว่า 1080px ให้ทำการ Upscale ด้วย Sharp สู่ 1080x1080 Full HD ด้วย Lanczos3
+      if (width < 1080 || height < 1080) {
+        log('info', `Facebook: upscaling profile picture from ${width}x${height} to 1080x1080 Full HD using Lanczos3`)
+        imageBuffer = await sharp(imageBuffer)
+          .resize(1080, 1080, {
+            kernel: sharp.kernel.lanczos3,
+            fit: 'cover',
+            position: 'center',
+          })
+          .sharpen({ sigma: 1.0, m1: 1.0, m2: 2.0 })
+          .jpeg({ quality: 95, chromaSubsampling: '4:4:4' })
+          .toBuffer()
+      }
+    } catch (err) {
+      log('warn', `Facebook: Sharp image processing skipped: ${(err as Error).message}`)
+    }
+  }
+
+  onProgress?.(100, 'ready')
   const filenameType = isCover ? 'cover' : (isProfile ? 'profile' : 'photo')
   return {
-    stream: imgResp.body,
-    filename: `${cleanId}_${filenameType}_HD.jpg`,
-    contentType: 'image/jpeg'
+    stream: new Response(imageBuffer).body as ReadableStream,
+    filename: `${cleanId}_${filenameType}_1080p_HD.jpg`,
+    contentType: 'image/jpeg',
+    fileSize: imageBuffer.length
   }
 }
