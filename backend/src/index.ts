@@ -701,6 +701,7 @@ if (process.env.NODE_ENV === 'production' || distExists) {
 // เริ่มต้นระบบ
 await initCookies()
 await initJobManager()
+await checkGalleryDl()
 
 if (process.env.NODE_ENV !== 'test') {
   app.listen(PORT)

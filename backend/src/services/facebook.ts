@@ -11,8 +11,11 @@ const UA_CRAWLER = 'facebookexternalhit/1.1 (+http://www.facebook.com/externalhi
 
 function isFacebookLoginWall(html: string): boolean {
   const title = html.match(/<title[^>]*>([^<]*)/i)?.[1] || ''
-  return /log in to facebook|เข้าสู่ระบบ facebook/i.test(title) ||
-    /<form\b[^>]*\bid\s*=\s*["']login_form["']/i.test(html)
+  if (/log in to facebook|เข้าสู่ระบบ facebook|you must log in|checkpoint/i.test(title)) return true
+  if (/<form\b[^>]*\bid\s*=\s*["']login_form["']/i.test(html)) return true
+  if (/id="login_form"|name="login_form"|action="\/login\.php"/i.test(html)) return true
+  if (html.includes('id="checkpointSubmitButton"') || html.includes('login_attempt')) return true
+  return false
 }
 
 /**
@@ -129,7 +132,33 @@ export async function getFacebookInfo(
       }
     }
 
-    // หากไม่สำเร็จ หรือเจอ Login wall ให้ fallback ไปใช้ Facebook Crawler UA
+    // 2. หากไม่สำเร็จ หรือเจอ Login wall ให้ลอง mbasic.facebook.com (HTML ล้วนแบบเบา ไม่มี JS/GraphQL)
+    if (!resp.ok || isLoginWall) {
+      log('info', `Facebook: trying mbasic fallback for "${cleanId}"`)
+      const mbasicUrl = finalUrlType === 'photo'
+        ? url.replace('www.facebook.com', 'mbasic.facebook.com').replace('web.facebook.com', 'mbasic.facebook.com')
+        : `https://mbasic.facebook.com/${cleanId}`
+      const mbasicResp = await safeFetch(mbasicUrl, {
+        headers: {
+          'User-Agent': UA_MOBILE,
+          'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+          'Accept-Language': 'th-TH,th;q=0.9,en-US;q=0.8,en;q=0.7',
+          ...(fbCookie ? { 'Cookie': fbCookie } : {})
+        },
+        signal,
+      })
+      log('info', 'Facebook: mbasic response', { status: mbasicResp.status, cookiePresent: !!fbCookie })
+      if (mbasicResp.ok) {
+        const mbasicHtml = await mbasicResp.text()
+        if (!isFacebookLoginWall(mbasicHtml)) {
+          html = mbasicHtml
+          resp = mbasicResp
+          isLoginWall = false
+        }
+      }
+    }
+
+    // 3. หากยังไม่สำเร็จ ค่อย fallback ไปใช้ Facebook Crawler UA
     if (!resp.ok || isLoginWall) {
       log('info', `Facebook: fallback to Crawler UA for "${cleanId}"`)
       const crawlerHeaders: Record<string, string> = {

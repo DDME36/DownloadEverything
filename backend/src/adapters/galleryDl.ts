@@ -87,8 +87,9 @@ export class GalleryDlAdapter implements DownloaderAdapter {
   readonly name = 'gallery-dl'
 
   canHandle(_url: string, platform: Platform): boolean {
-    if (!galleryDlInstalled) return false
-    return ['instagram', 'twitter', 'reddit'].includes(platform)
+    if (!['instagram', 'twitter', 'reddit'].includes(platform)) return false
+    if (galleryDlCommand === null && !galleryDlInstalled) return true
+    return galleryDlInstalled
   }
 
   async getInfo(url: string, signal?: AbortSignal): Promise<MediaInfo> {

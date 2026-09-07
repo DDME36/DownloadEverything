@@ -114,15 +114,22 @@ export async function getInstagramInfo(
 
     if (!profilePicUrl) {
       const headers: Record<string, string> = {
-        'User-Agent': UA_IG_APP,
+        'User-Agent': UA_DESKTOP,
         'X-IG-App-ID': IG_APP_ID,
         'Accept': 'application/json',
+        'X-ASBD-ID': '129477',
+        'X-IG-WWW-Claim': '0',
+        'X-Requested-With': 'XMLHttpRequest',
+        'Referer': `https://www.instagram.com/${cleanUsername}/`,
+        'Sec-Fetch-Site': 'same-origin',
+        'Sec-Fetch-Mode': 'cors',
+        'Sec-Fetch-Dest': 'empty',
       }
       if (igCookie) {
         headers['Cookie'] = igCookie
       }
 
-      const apiResp = await safeFetch(`https://i.instagram.com/api/v1/users/web_profile_info/?username=${cleanUsername}`, {
+      const apiResp = await safeFetch(`https://www.instagram.com/api/v1/users/web_profile_info/?username=${cleanUsername}`, {
         headers,
         signal,
       })
