@@ -1,4 +1,8 @@
-const API_BASE = import.meta.env.VITE_API_URL || ''
+let rawBase = import.meta.env.VITE_API_URL || ''
+if (typeof window !== 'undefined' && window.location.protocol === 'https:' && rawBase.startsWith('http://')) {
+  rawBase = ''
+}
+const API_BASE = rawBase
 
 // Timeout สำหรับ free tier (60 วินาที)
 const ANALYZE_TIMEOUT = 60000
