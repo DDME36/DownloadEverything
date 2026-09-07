@@ -226,12 +226,14 @@ export async function safeFetch(
     const parsed = parseAndValidateUrl(currentUrl)
     await assertSafePublicDestination(parsed.hostname)
 
-    const reqInit: RequestInit = {
+    const proxyUrl = (init as any)?.proxy || process.env.HTTP_PROXY || process.env.HTTPS_PROXY || process.env.ALL_PROXY
+    const reqInit: RequestInit & { proxy?: string } = {
       ...init,
       redirect: 'manual', // ไม่อนุญาตให้ติดตาม redirect อัตโนมัติ
+      ...(proxyUrl ? { proxy: proxyUrl } : {}),
     }
 
-    const response = await fetch(parsed.href, reqInit)
+    const response = await fetch(parsed.href, reqInit as RequestInit)
 
     // ตรวจสอบสถานะการ Redirect: 301, 302, 303, 307, 308
     if ([301, 302, 303, 307, 308].includes(response.status)) {

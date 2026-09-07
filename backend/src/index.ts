@@ -396,10 +396,26 @@ export const app = new Elysia()
 
       clearTimeout(timer)
 
-      // Proxy thumbnail สำหรับ Facebook/Instagram (รองรับ BACKEND_PUBLIC_URL สำหรับ Vercel+Oracle)
-      if (data && data.thumbnail && (data.platform === 'facebook' || data.platform === 'instagram')) {
+      // Proxy thumbnail และรายการรูปในอัลบั้มสำหรับ Facebook/Instagram (รองรับ BACKEND_PUBLIC_URL สำหรับ Vercel+Oracle)
+      if (data && (data.platform === 'facebook' || data.platform === 'instagram')) {
         const backendBase = process.env.BACKEND_PUBLIC_URL?.replace(/\/$/, '') || ''
-        data.thumbnail = `${backendBase}/api/proxy-image?url=${encodeURIComponent(data.thumbnail)}`
+        const wrapProxy = (rawUrl?: string) => {
+          if (!rawUrl) return rawUrl
+          if (rawUrl.startsWith('/api/proxy-image') || rawUrl.includes('/api/proxy-image?url=')) return rawUrl
+          return `${backendBase}/api/proxy-image?url=${encodeURIComponent(rawUrl)}`
+        }
+
+        if (data.thumbnail) {
+          data.thumbnail = wrapProxy(data.thumbnail)
+        }
+        if (data.items && Array.isArray(data.items)) {
+          for (const item of data.items) {
+            if (item.thumbnail) item.thumbnail = wrapProxy(item.thumbnail)
+            if (item.url && item.kind === 'image') {
+              item.url = wrapProxy(item.url)
+            }
+          }
+        }
       }
 
       // บันทึก Cache (10 นาที)

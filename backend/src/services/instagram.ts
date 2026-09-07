@@ -271,7 +271,7 @@ export async function downloadInstagram(
   optionId?: string,
   signal?: AbortSignal,
   onProgress?: (progress: number, stage: DownloadStage) => void,
-  cachedMeta?: { title?: string; filename?: string }
+  cachedMeta?: MediaInfo
 ): Promise<DownloadResult> {
   // If it's a reel or post video, use generic downloader
   if ((contentType === 'reel' || contentType === 'post') && optionId !== 'profile_hd') {
@@ -289,14 +289,26 @@ export async function downloadInstagram(
   }
 
   onProgress?.(10, 'downloading')
-  const info = await getInstagramInfo(url, cleanUsername, 'profile', signal)
-  let imageUrl = info.thumbnail || ''
+
+  // 1. ดึงจาก cachedMeta ก่อนเสมอ เพื่อป้องกันการยิง Instagram ซ้ำ ซึ่งอาจติด Rate limit หรือ Session challenge
+  let imageUrl = ''
+  if (cachedMeta) {
+    imageUrl = cachedMeta.thumbnail || cachedMeta.items?.[0]?.url || cachedMeta.items?.[0]?.thumbnail || ''
+  }
+
+  // 2. หากไม่มีในแคช ค่อยดึงข้อมูลใหม่
+  if (!imageUrl) {
+    const info = await getInstagramInfo(url, cleanUsername, 'profile', signal)
+    imageUrl = info.thumbnail || ''
+  }
 
   if (!imageUrl) throw new AppError('DOWNLOAD_FAILED', 'ไม่พบ URL รูปโปรไฟล์')
 
-  if (imageUrl.startsWith('/api/proxy-image')) {
-    const parsed = new URL(imageUrl, 'http://localhost')
-    imageUrl = parsed.searchParams.get('url') || imageUrl
+  if (imageUrl.startsWith('/api/proxy-image') || imageUrl.includes('/api/proxy-image?url=')) {
+    try {
+      const parsed = new URL(imageUrl, 'http://localhost')
+      imageUrl = parsed.searchParams.get('url') || imageUrl
+    } catch {}
   }
 
   log('info', `Instagram: streaming → ${imageUrl.substring(0, 120)}...`)

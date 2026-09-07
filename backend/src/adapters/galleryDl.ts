@@ -127,33 +127,69 @@ export class GalleryDlAdapter implements DownloaderAdapter {
       throw new AppError('GALLERY_EXTRACT_FAILED', `ไม่สามารถดึงข้อมูลอัลบั้มได้: ${errorOutput.substring(0, 200)}`, 500)
     }
 
-    const lines = output.trim().split('\n').filter(Boolean)
     const items: MediaItem[] = []
+    let rawObjects: any[] = []
+
+    // 1. ตรวจสอบว่า gallery-dl ส่ง output มาเป็น JSON Array ก้อนเดียว หรือแยกทีละบรรทัด
+    try {
+      const parsedAll = JSON.parse(output.trim())
+      if (Array.isArray(parsedAll)) {
+        rawObjects = parsedAll
+      } else if (typeof parsedAll === 'object' && parsedAll !== null) {
+        rawObjects = [parsedAll]
+      }
+    } catch {
+      const lines = output.trim().split('\n').filter(Boolean)
+      for (const line of lines) {
+        try {
+          rawObjects.push(JSON.parse(line))
+        } catch {}
+      }
+    }
 
     let index = 1
-    for (const line of lines) {
-      try {
-        const itemData = JSON.parse(line)
-        const mediaUrl = Array.isArray(itemData) ? itemData[1] : (itemData.url || '')
-        const isVideo = mediaUrl.endsWith('.mp4') || mediaUrl.endsWith('.webm')
+    for (const itemData of rawObjects) {
+      // โครงสร้างของ gallery-dl -j:
+      // Category 2: [2, url, metadata] -> ไฟล์สื่อ (รูปภาพ/วิดีโอ)
+      // Category 3: [3, metadata] -> ไดเรกทอรี / ข้อมูลอัลบั้ม (ต้องข้าม เพื่อไม่ให้ url กลายเป็น [object Object])
+      // หรือ Object ธรรมดา: { url: ... }
+      let mediaUrl = ''
+      if (Array.isArray(itemData)) {
+        if (itemData[0] === 2 && typeof itemData[1] === 'string') {
+          mediaUrl = itemData[1]
+        } else if (typeof itemData[1] === 'string' && itemData[1].startsWith('http')) {
+          mediaUrl = itemData[1]
+        }
+      } else if (typeof itemData === 'object' && itemData !== null) {
+        mediaUrl = itemData.url || (Array.isArray(itemData.urls) ? itemData.urls[0] : '')
+      }
 
-        items.push({
-          id: `item_${index}`,
-          kind: isVideo ? 'video' : 'image',
-          title: `Item #${index}`,
-          url: mediaUrl,
-          thumbnail: mediaUrl,
-          options: [
-            {
-              id: `item_${index}_download`,
-              label: `ดาวน์โหลด ${isVideo ? 'วิดีโอ' : 'รูปภาพ'} #${index}`,
-              format: isVideo ? 'mp4' : 'jpg',
-              quality: 'HD',
-            },
-          ],
-        })
-        index++
-      } catch {}
+      if (!mediaUrl || typeof mediaUrl !== 'string' || !mediaUrl.startsWith('http')) {
+        continue
+      }
+
+      const isVideo = mediaUrl.includes('.mp4') || mediaUrl.includes('.webm') || mediaUrl.includes('.m4v')
+
+      items.push({
+        id: `item_${index}`,
+        kind: isVideo ? 'video' : 'image',
+        title: `Item #${index}`,
+        url: mediaUrl,
+        thumbnail: mediaUrl,
+        options: [
+          {
+            id: `item_${index}_download`,
+            label: `ดาวน์โหลด ${isVideo ? 'วิดีโอ' : 'รูปภาพ'} #${index}`,
+            format: isVideo ? 'mp4' : 'jpg',
+            quality: 'HD',
+          },
+        ],
+      })
+      index++
+    }
+
+    if (items.length === 0) {
+      throw new AppError('GALLERY_EXTRACT_FAILED', 'ไม่พบไฟล์รูปภาพหรือวิดีโอที่สามารถดาวน์โหลดได้ในโพสต์หรืออัลบั้มนี้ (อาจเป็นบัญชีส่วนตัว หรือต้องการ Cookies ใน cookies.txt)', 404)
     }
 
     const albumZipOption = {
