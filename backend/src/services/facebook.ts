@@ -23,6 +23,25 @@ function decodeUnicodeEscapes(str: string): string {
 }
 
 /**
+ * ปลดล็อกขนาดภาพเต็มของ Facebook CDN
+ * Facebook มักใส่ ctp=s200x200 เพื่อจำกัดขนาดรูปโปรไฟล์บนหน้าเว็บ
+ * การตัด ctp ออกทำให้ Facebook CDN ปล่อยภาพต้นฉบับคมชัดสูงสุด (เช่น 960x958 หรือ 1080p) ทันที
+ */
+export function maximizeFacebookPhotoUrl(url: string): string {
+  if (!url) return url
+  if (url.includes('cstp=mx') && url.includes('ctp=s')) {
+    try {
+      const parsed = new URL(url)
+      parsed.searchParams.delete('ctp')
+      return parsed.toString()
+    } catch {
+      return url.replace(/([&?])ctp=s\d+x\d+(&|$)/, (m, p1, p2) => (p2 === '&' ? p1 : ''))
+    }
+  }
+  return url
+}
+
+/**
  * ดึง Cookie ของ Facebook จาก cookies.txt หรือ Environment Variable
  */
 async function getFacebookCookie(): Promise<string> {
@@ -320,6 +339,10 @@ export async function getFacebookInfo(
     mediaUrl = ogImageUrl
   }
 
+  if (mediaUrl) {
+    mediaUrl = maximizeFacebookPhotoUrl(mediaUrl)
+  }
+
   if (!mediaUrl) {
     throw new AppError('AUTH_REQUIRED', `ไม่สามารถดึงรูปภาพหรือโปรไฟล์ Facebook นี้ได้`, 403, 'Facebook ปิดกั้นการดูเนื้อหานี้สำหรับคำขอสาธารณะ หรือเนื้อหานี้ตั้งค่าเป็นส่วนตัว แนะนำเพิ่ม Cookies Facebook ใน cookies.txt')
   }
@@ -413,6 +436,9 @@ export async function downloadFacebook(
     } catch {}
   }
 
+  // ปลดล็อกขนาดภาพเต็ม ลบ thumbnail restriction (ctp)
+  imageUrl = maximizeFacebookPhotoUrl(imageUrl)
+
   log('info', 'Facebook: downloading image', { host: new URL(imageUrl).hostname, cached: !!cachedMeta, option: optionId })
 
   const imgResp = await safeFetch(imageUrl, { 
@@ -436,8 +462,9 @@ export async function downloadFacebook(
       const width = meta.width || 0
       const height = meta.height || 0
 
-      // หากภาพมีขนาดเล็กกว่า 1080px ให้ทำการ Upscale ด้วย Sharp สู่ 1080x1080 Full HD ด้วย Lanczos3
-      if (width < 1080 || height < 1080) {
+      // หากภาพมีขนาดเล็กกว่า 720px ให้ทำการ Upscale ด้วย Sharp สู่ 1080x1080 Full HD ด้วย Lanczos3
+      // หากภาพมีความละเอียดสูงอยู่แล้ว (>= 720px เช่น 960x958 หรือ 1080p) ให้รักษาคุณภาพไฟล์ภาพต้นฉบับคมชัด 100% ไว้โดยไม่ต้องบีบอัดซ้ำ
+      if (width < 720 || height < 720) {
         log('info', `Facebook: upscaling profile picture from ${width}x${height} to 1080x1080 Full HD using Lanczos3`)
         imageBuffer = await sharp(imageBuffer)
           .resize(1080, 1080, {
@@ -446,8 +473,10 @@ export async function downloadFacebook(
             position: 'center',
           })
           .sharpen({ sigma: 1.0, m1: 1.0, m2: 2.0 })
-          .jpeg({ quality: 95, chromaSubsampling: '4:4:4' })
+          .jpeg({ quality: 98, chromaSubsampling: '4:4:4' })
           .toBuffer()
+      } else {
+        log('info', `Facebook: profile picture is already high resolution (${width}x${height}), keeping original uncompressed quality`)
       }
     } catch (err) {
       log('warn', `Facebook: Sharp image processing skipped: ${(err as Error).message}`)
