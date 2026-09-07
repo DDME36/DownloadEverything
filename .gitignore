@@ -39,3 +39,7 @@ logs/
 *.db
 *.db-*
 
+# Review Bundles
+social-review-bundle/
+social-review-bundle.zip
+
