@@ -223,6 +223,7 @@ export async function safeFetch(
   let currentUrl = typeof input === 'string' ? input : input.href
   let hops = 0
   const headers = new Headers(init?.headers)
+  const visitedUrls = new Set<string>()
 
   while (hops <= maxRedirects) {
     const parsed = parseAndValidateUrl(currentUrl)
@@ -253,13 +254,26 @@ export async function safeFetch(
       // ตีความ Relative URL ให้กลายเป็น Absolute URL ตาม URL ปัจจุบัน
       try {
         const nextUrl = new URL(location, currentUrl)
+        if (visitedUrls.has(nextUrl.href) || nextUrl.href === currentUrl) {
+          await response.body?.cancel()
+          if (nextUrl.hostname.includes('instagram.com')) {
+            throw new AppError('AUTH_REQUIRED', 'เซสชัน Instagram ใน Cookies หมดอายุหรือติดการตรวจสอบความปลอดภัย (เกิด Redirect Loop) กรุณาอัปเดต Cookie Instagram ใหม่', 401)
+          }
+          if (nextUrl.hostname.includes('facebook.com')) {
+            throw new AppError('AUTH_REQUIRED', 'เซสชัน Facebook ใน Cookies หมดอายุหรือติดการตรวจสอบความปลอดภัย (เกิด Redirect Loop) กรุณาอัปเดต Cookie Facebook ใหม่', 401)
+          }
+          throw new AppError('REDIRECT_LOOP', 'ตรวจพบการเปลี่ยนเส้นทางวนซ้ำ (Redirect Loop)', 400)
+        }
+        visitedUrls.add(currentUrl)
+
         if (nextUrl.origin !== parsed.origin) {
           headers.delete('cookie')
           headers.delete('authorization')
           headers.delete('proxy-authorization')
         }
         currentUrl = nextUrl.href
-      } catch {
+      } catch (e) {
+        if (e instanceof AppError) throw e
         throw new AppError('INVALID_REDIRECT', 'URL การเปลี่ยนเส้นทางไม่ถูกต้อง', 400)
       }
 

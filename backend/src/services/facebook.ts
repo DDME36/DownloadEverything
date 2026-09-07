@@ -82,9 +82,9 @@ export async function getFacebookInfo(
   contentType: ContentType = 'profile',
   signal?: AbortSignal
 ): Promise<MediaInfo> {
-  const isVideo = contentType === 'watch' || contentType === 'reel' || contentType === 'video' ||
+  const isVideo = contentType === 'watch' || contentType === 'reel' || (contentType === 'video' && !url.includes('/share/')) ||
     url.includes('/video') || url.includes('/watch') || url.includes('fb.watch') || url.includes('/reel') ||
-    url.includes('/share/v/') || url.includes('/share/r/') || url.includes('/share/')
+    url.includes('/share/v/') || url.includes('/share/r/')
 
   // 1. Videos & Reels -> Delegate to yt-dlp extractor
   if (isVideo) {
@@ -111,7 +111,7 @@ export async function getFacebookInfo(
   log('info', `Facebook: processing "${cleanId}" as ${finalUrlType}`)
 
   try {
-    const targetUrl = finalUrlType === 'photo' ? url : `https://www.facebook.com/${cleanId}`
+    const targetUrl = (finalUrlType === 'photo' || url.includes('/share/') || url.includes('profile.php') || !cleanId) ? url : `https://www.facebook.com/${cleanId}`
     const fbCookie = await getFacebookCookie()
     
     const headers: Record<string, string> = {
@@ -264,13 +264,13 @@ export async function getFacebookInfo(
             const viewerId = viewerIdMatch ? viewerIdMatch[1] : ''
 
             const scoredMatches = profileMatches.map(u => {
-              let score = 0
+              let score = 1
               const mx = u.match(/cstp=mx(\d+)x(\d+)/)
               const w = mx ? parseInt(mx[1], 10) : 0
               const h = mx ? parseInt(mx[2], 10) : 0
               if (w >= 720 || h >= 720) score += 100
               else if (w >= 300 || h >= 300) score += 50
-              else if (w > 0) score += 10
+              else if (w > 188) score += 10
 
               if (w > 0 && w <= 188 && h <= 188) score -= 60
               if (u.includes('s40x40') || u.includes('s32x32') || u.includes('s24x24') || u.includes('s60x60')) score -= 40
@@ -278,10 +278,10 @@ export async function getFacebookInfo(
               return { u, score }
             }).sort((a, b) => b.score - a.score)
 
-            if (scoredMatches[0] && scoredMatches[0].score > -50) {
-              mediaUrl = scoredMatches[0].u
-            } else {
-              mediaUrl = profileMatches[0]
+            // คัดเลือกเฉพาะรูปโปรไฟล์ที่มีคุณภาพ และต้องไม่ใช่ไอคอนย่อขนาดเล็กของ Viewer
+            const validCandidates = scoredMatches.filter(m => m.score > 0)
+            if (validCandidates.length > 0) {
+              mediaUrl = validCandidates[0].u
             }
           }
         }

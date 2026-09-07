@@ -142,7 +142,7 @@ export function detectUrl(url: string): DetectedUrl {
         contentType = 'post'
         identifier = parts[2] || parts[1]
       } else {
-        contentType = 'video'
+        contentType = 'profile'
         identifier = parts[1] || ''
       }
     } else if (pathname.includes('/photo') || pathname.includes('/photos')) {

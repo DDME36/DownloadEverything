@@ -239,7 +239,17 @@ export async function getInstagramInfo(
         }
       }
     } catch (e) {
-      if (e instanceof AppError) throw e
+      if (e instanceof AppError) {
+        if (e.code === 'TOO_MANY_REDIRECTS' || e.code === 'REDIRECT_LOOP') {
+          throw new AppError(
+            'AUTH_REQUIRED',
+            'คุกกี้ Instagram หมดอายุหรือติดการตรวจสอบความปลอดภัย (Checkpoint) จากระบบ กรุณาอัปเดต Cookie ใหม่ใน cookies.txt',
+            403,
+            'เปิดแอป Instagram บนมือถือเพื่อตรวจสอบและกดยืนยันตัวตน ("This was me") หรือคัดลอกคุกกี้ใหม่อีกครั้งครับ'
+          )
+        }
+        throw e
+      }
       log('warn', `Instagram: HTML scrape failed -> ${(e as Error).message}`)
     }
   }
