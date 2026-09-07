@@ -62,10 +62,7 @@ export async function ensureTempDir(): Promise<string> {
 
 export function getDataDir(): string {
   if (process.env.DATA_DIR) return process.env.DATA_DIR
-  const isWin = process.platform === 'win32'
-  return isWin
-    ? join(process.cwd(), 'data')
-    : '/data'
+  return join(process.cwd(), 'data')
 }
 
 export async function ensureDataDir(): Promise<string> {
