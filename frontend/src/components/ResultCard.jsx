@@ -186,23 +186,18 @@ export default function ResultCard({ data, originalUrl }) {
       setLastDownloadedUrl(directUrl)
       setLastDownloadedFilename(serverFilename)
 
-      // 3. Native Browser Stream Trigger
-      if (isIOS) {
-        window.open(directUrl, '_blank')
-        setShowShareModal(true)
-      } else {
-        const a = document.createElement('a')
-        a.href = directUrl
-        a.download = serverFilename
-        a.style.display = 'none'
-        document.body.appendChild(a)
-        a.click()
-        setTimeout(() => {
-          try {
-            document.body.removeChild(a)
-          } catch {}
-        }, 2000)
-      }
+      // 3. Native Browser Stream Trigger (ดาวน์โหลดตรงผ่านเบราว์เซอร์อย่างราบรื่น ไม่เปิดแท็บขาว)
+      const a = document.createElement('a')
+      a.href = directUrl
+      a.download = serverFilename || 'download'
+      a.style.display = 'none'
+      document.body.appendChild(a)
+      a.click()
+      setTimeout(() => {
+        try {
+          document.body.removeChild(a)
+        } catch {}
+      }, 2000)
 
       setDownloadStatus('done')
       jobIdRef.current = null

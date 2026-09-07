@@ -175,8 +175,6 @@ export default function MobileShareModal({ isOpen, onClose, downloadUrl, title =
               href={resolvedUrl}
               download={filename || 'download'}
               className="modal-direct-download-link"
-              target="_blank"
-              rel="noopener noreferrer"
             >
               <Download size={16} /> แตะที่นี่หากการดาวน์โหลดไม่เริ่มอัตโนมัติ
             </a>
