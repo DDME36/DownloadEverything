@@ -88,45 +88,82 @@ export async function getInstagramInfo(
   // Method 1: Anonymous / Authenticated API
   try {
     const igCookie = await getInstagramCookieHeader()
-    const headers: Record<string, string> = {
-      'User-Agent': UA_IG_APP,
-      'X-IG-App-ID': IG_APP_ID,
-      'Accept': 'application/json',
-    }
     if (igCookie) {
-      headers['Cookie'] = igCookie
+      // ตรวจสอบว่าเป็นบัญชีของตัวเองใน Cookie หรือไม่ (API current_user มักตอบกลับ 200 OK ได้เสถียร)
+      try {
+        const cuResp = await safeFetch('https://www.instagram.com/api/v1/accounts/current_user/?edit=true', {
+          headers: {
+            'User-Agent': UA_IG_APP,
+            'X-IG-App-ID': IG_APP_ID,
+            'Accept': 'application/json',
+            'Cookie': igCookie,
+          },
+          signal,
+        })
+        if (cuResp.ok) {
+          const cuData = await cuResp.json() as any
+          const cuUser = cuData?.user
+          if (cuUser && cuUser.username?.toLowerCase() === cleanUsername.toLowerCase()) {
+            displayName = (cuUser.full_name || '').trim() ? `${cuUser.full_name} (@${cleanUsername})` : `@${cleanUsername}`
+            profilePicUrl = cuUser.hd_profile_pic_url_info?.url || cuUser.profile_pic_url || ''
+            resolution = '1080x1080px (Full HD จากบัญชีของคุณ)'
+          }
+        }
+      } catch {}
     }
 
-    const apiResp = await safeFetch(`https://i.instagram.com/api/v1/users/web_profile_info/?username=${cleanUsername}`, {
-      headers,
-      signal,
-    })
+    if (!profilePicUrl) {
+      const headers: Record<string, string> = {
+        'User-Agent': UA_IG_APP,
+        'X-IG-App-ID': IG_APP_ID,
+        'Accept': 'application/json',
+      }
+      if (igCookie) {
+        headers['Cookie'] = igCookie
+      }
 
-    if (apiResp.ok) {
-      log('info', `Instagram: web_profile_info → HTTP 200 (HD profile available)`)
-      const data = await apiResp.json() as any
-      const user = data?.data?.user
-      if (user) {
-        const fullName = (user.full_name || '').trim()
-        displayName = fullName ? `${fullName} (@${cleanUsername})` : `@${cleanUsername}`
+      const apiResp = await safeFetch(`https://i.instagram.com/api/v1/users/web_profile_info/?username=${cleanUsername}`, {
+        headers,
+        signal,
+      })
 
-        if (user.hd_profile_pic_versions && Array.isArray(user.hd_profile_pic_versions) && user.hd_profile_pic_versions.length > 0) {
-          const sorted = [...user.hd_profile_pic_versions].sort((a: any, b: any) => (b.width || 0) - (a.width || 0))
-          profilePicUrl = sorted[0].url
-          resolution = `${sorted[0].width}x${sorted[0].height}px (Full HD)`
-        } else if (user.hd_profile_pic_url_info?.url) {
-          profilePicUrl = user.hd_profile_pic_url_info.url
-          resolution = '1080x1080px (Full HD)'
-        } else if (user.profile_pic_url_hd) {
-          profilePicUrl = user.profile_pic_url_hd
-          resolution = '1080x1080px (Full HD)'
-        } else if (user.profile_pic_url) {
-          profilePicUrl = user.profile_pic_url
-          resolution = 'ความละเอียดจาก Instagram'
+      if (apiResp.ok) {
+        log('info', `Instagram: web_profile_info → HTTP 200 (HD profile available)`)
+        const data = await apiResp.json() as any
+        const user = data?.data?.user
+        if (user) {
+          const fullName = (user.full_name || '').trim()
+          displayName = fullName ? `${fullName} (@${cleanUsername})` : `@${cleanUsername}`
+
+          if (user.hd_profile_pic_versions && Array.isArray(user.hd_profile_pic_versions) && user.hd_profile_pic_versions.length > 0) {
+            const sorted = [...user.hd_profile_pic_versions].sort((a: any, b: any) => (b.width || 0) - (a.width || 0))
+            profilePicUrl = sorted[0].url
+            resolution = `${sorted[0].width}x${sorted[0].height}px (Full HD)`
+          } else if (user.hd_profile_pic_url_info?.url) {
+            profilePicUrl = user.hd_profile_pic_url_info.url
+            resolution = '1080x1080px (Full HD)'
+          } else if (user.profile_pic_url_hd) {
+            profilePicUrl = user.profile_pic_url_hd
+            resolution = '1080x1080px (Full HD)'
+          } else if (user.profile_pic_url) {
+            profilePicUrl = user.profile_pic_url
+            resolution = 'ความละเอียดจาก Instagram'
+          }
+        }
+      } else {
+        const errText = await apiResp.text().catch(() => '')
+        if (errText.includes('challenge_required') || errText.includes('checkpoint_required')) {
+          throw new AppError(
+            'AUTH_REQUIRED',
+            `Instagram บล็อกการดึงข้อมูลและติดสถานะ Checkpoint (challenge_required)`,
+            403,
+            'กรุณาเปิดแอป Instagram บนมือถือเพื่อกดยืนยันตัวตน ("This was me") เพื่อปลดล็อกบัญชี หรือใช้ลิงก์วิดีโอ/Reels สาธารณะแทนครับ'
+          )
         }
       }
     }
   } catch (e) {
+    if (e instanceof AppError) throw e
     log('warn', `Instagram: API failed -> ${(e as Error).message}`)
   }
 
@@ -134,16 +171,44 @@ export async function getInstagramInfo(
   if (!profilePicUrl) {
     log('info', `Instagram: trying HTML scrape fallback...`)
     try {
+      const igCookie = await getInstagramCookieHeader()
+      const reqHeaders: Record<string, string> = {
+        'User-Agent': UA_DESKTOP,
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        'Accept-Language': 'th-TH,th;q=0.9,en-US;q=0.8,en;q=0.7',
+      }
+      if (igCookie) {
+        reqHeaders['Cookie'] = igCookie
+      }
       const resp = await safeFetch(`https://www.instagram.com/${cleanUsername}/`, {
-        headers: {
-          'User-Agent': 'Mozilla/5.0',
-        },
+        headers: reqHeaders,
         signal,
       })
       if (resp.ok) {
         const html = await resp.text()
+
+        // 1. ลองดึงผ่าน Helper
         profilePicUrl = profileImageFromHtml(html) || ''
         if (profilePicUrl) resolution = 'รูปใหญ่จากข้อมูลต้นทาง'
+
+        // 2. ลองค้นหาใน script tags
+        if (!profilePicUrl) {
+          const scriptMatches = Array.from(html.matchAll(/profile_pic_url(_hd)?["']\s*:\s*["']([^"']+)["']/gi))
+          for (const m of scriptMatches) {
+            const rawUrl = m[2].replace(/\\u0026/g, '&').replace(/\\/g, '')
+            if (
+              !rawUrl.includes('rsrc.php') && 
+              !rawUrl.includes('instagram-logo') && 
+              !rawUrl.includes('static/images')
+            ) {
+              profilePicUrl = rawUrl
+              resolution = 'ความละเอียดจาก Instagram'
+              break
+            }
+          }
+        }
+
+        // 3. ตรวจสอบ og:image
         const ogMatch = html.match(/<meta\s+property="og:image"\s+content="([^"]+)"/i)
         if (!profilePicUrl && ogMatch) {
           const pic = decodeAllHtmlEntities(ogMatch[1])
@@ -166,9 +231,9 @@ export async function getInstagramInfo(
   if (!profilePicUrl) {
     throw new AppError(
       'AUTH_REQUIRED',
-      `Instagram ปิดกั้นการดูโปรไฟล์ @${cleanUsername} สำหรับคำขอสาธารณะ`,
+      `Instagram ปิดกั้นการดูโปรไฟล์ @${cleanUsername}`,
       403,
-      'Instagram จำกัดการเข้าถึงโปรไฟล์แบบไม่ล็อกอิน ลองใช้ลิงก์โพสต์หรือ Reels สาธารณะ หรือใส่ Instagram Cookie ในระบบเพื่อปลดล็อกได้ครับ'
+      'บัญชีนี้อาจเป็นบัญชีส่วนตัว (Private) หรือ Instagram บล็อกคำขอจากเซิร์ฟเวอร์ภายนอก ลองใช้ลิงก์โพสต์หรือ Reels สาธารณะแทนครับ'
     )
   }
 

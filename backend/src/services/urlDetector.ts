@@ -85,6 +85,17 @@ export function detectUrl(url: string): DetectedUrl {
     } else if (parts[0] === 'stories') {
       identifier = parts[1] || ''
       contentType = 'story'
+    } else if (parts[0] === 'share') {
+      if (parts[1] === 'p') {
+        contentType = 'post'
+        identifier = parts[2] || ''
+      } else if (parts[1] === 'r' || parts[1] === 'reel' || parts[1] === 'reels') {
+        contentType = 'reel'
+        identifier = parts[2] || ''
+      } else {
+        contentType = 'post'
+        identifier = parts[1] || ''
+      }
     } else if (parts[0] && !['explore', 'accounts', 'direct'].includes(parts[0])) {
       // Profile username
       identifier = parts[0]
@@ -119,6 +130,21 @@ export function detectUrl(url: string): DetectedUrl {
       const vIdx = parts.findIndex(p => p === 'videos')
       identifier = (vIdx !== -1 && parts[vIdx + 1]) ? parts[vIdx + 1] : (parts[parts.length - 1] || '')
       contentType = 'video'
+    } else if (parts[0] === 'share') {
+      // รูปแบบลิงก์แชร์จากแอป Facebook บนมือถือ: /share/v/..., /share/r/..., /share/p/..., /share/...
+      if (parts[1] === 'v') {
+        contentType = 'video'
+        identifier = parts[2] || parts[1]
+      } else if (parts[1] === 'r') {
+        contentType = 'reel'
+        identifier = parts[2] || parts[1]
+      } else if (parts[1] === 'p') {
+        contentType = 'post'
+        identifier = parts[2] || parts[1]
+      } else {
+        contentType = 'video'
+        identifier = parts[1] || ''
+      }
     } else if (pathname.includes('/photo') || pathname.includes('/photos')) {
       if (searchParams.has('fbid')) {
         identifier = searchParams.get('fbid') || ''

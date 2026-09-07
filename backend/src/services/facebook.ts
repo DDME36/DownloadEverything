@@ -14,7 +14,8 @@ export async function getFacebookInfo(
   signal?: AbortSignal
 ): Promise<MediaInfo> {
   const isVideo = contentType === 'watch' || contentType === 'reel' || contentType === 'video' ||
-    url.includes('/video') || url.includes('/watch') || url.includes('fb.watch') || url.includes('/reel')
+    url.includes('/video') || url.includes('/watch') || url.includes('fb.watch') || url.includes('/reel') ||
+    url.includes('/share/v/') || url.includes('/share/r/') || url.includes('/share/')
 
   // 1. Videos & Reels -> Delegate to yt-dlp extractor
   if (isVideo) {
