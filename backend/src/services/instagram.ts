@@ -6,6 +6,8 @@ import { profileImageFromHtml } from '../utils/mediaQuality'
 import { getGenericInfo, downloadGeneric } from './generic'
 import { join } from 'node:path'
 import sharp from 'sharp'
+import { getGalleryDlCommand } from '../adapters/galleryDl'
+import { killProcessTree } from '../utils/process'
 
 const UA_DESKTOP = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36'
 const UA_IG_APP = 'Instagram 275.0.0.27.98 Android (33/13; 420dpi; 1080x2400; samsung; SM-S918B; dm3q; qcom; en_US; 458229258)'
@@ -51,6 +53,105 @@ export async function getInstagramCookieHeader(): Promise<string | null> {
     }
   } catch {}
 
+  return null
+}
+
+const UA_CRAWLER = 'facebookexternalhit/1.1 (+http://www.facebook.com/externalhit_uatext.php)'
+
+/**
+ * ดึงรูปโปรไฟล์ Instagram คุณภาพสูงผ่าน gallery-dl
+ * ป้องกันการติด 429 Rate Limit บน Datacenter IP และรองรับการดึงรูปโปรไฟล์แม้บัญชีเป็น Private
+ */
+async function getInstagramAvatarViaGalleryDl(
+  username: string,
+  signal?: AbortSignal
+): Promise<{ profilePicUrl: string; displayName: string; resolution: string } | null> {
+  if (process.env.NODE_ENV === 'test') {
+    return null
+  }
+
+  try {
+    const cmd = await getGalleryDlCommand()
+    if (!cmd) return null
+
+    const cookiesPath = getCookiesPath() || join(getDataDir(), 'cookies', 'cookies.txt')
+    const cookieArgs = cookiesPath && (await Bun.file(cookiesPath).exists()) ? ['--cookies', cookiesPath] : []
+
+    const avatarUrl = `https://www.instagram.com/${username}/avatar/`
+    const proc = Bun.spawn([...cmd, ...cookieArgs, '-j', avatarUrl], {
+      stdout: 'pipe',
+      stderr: 'pipe',
+    })
+
+    let timer: any
+    const timeoutPromise = new Promise<void>(resolve => {
+      timer = setTimeout(() => {
+        killProcessTree(proc).catch(() => {})
+        resolve()
+      }, 10000)
+    })
+
+    const onAbort = () => { killProcessTree(proc).catch(() => {}) }
+    if (signal) signal.addEventListener('abort', onAbort)
+
+    let stdout = ''
+    let exitCode = 0
+    try {
+      const [out] = await Promise.all([
+        new Response(proc.stdout).text(),
+        new Response(proc.stderr).text(),
+      ])
+      stdout = out
+      exitCode = await proc.exited
+    } finally {
+      clearTimeout(timer)
+      if (signal) signal.removeEventListener('abort', onAbort)
+    }
+
+    if (exitCode !== 0 || !stdout.trim()) {
+      return null
+    }
+
+    let rawObjects: any[] = []
+    try {
+      const parsed = JSON.parse(stdout.trim())
+      rawObjects = Array.isArray(parsed) ? parsed : [parsed]
+    } catch {
+      const lines = stdout.trim().split('\n').filter(Boolean)
+      for (const l of lines) {
+        try { rawObjects.push(JSON.parse(l)) } catch {}
+      }
+    }
+
+    let picUrl = ''
+    let fullName = ''
+    let width = 0
+    let height = 0
+
+    for (const item of rawObjects) {
+      if (Array.isArray(item)) {
+        if (item[0] === 2 && item[1]?.user) {
+          fullName = (item[1].user.full_name || '').trim()
+        }
+        if (item[0] === 3 && typeof item[1] === 'string' && /^https?:\/\//i.test(item[1])) {
+          picUrl = item[1]
+          if (item[2]?.width) width = item[2].width
+          if (item[2]?.height) height = item[2].height
+        }
+      }
+    }
+
+    if (picUrl) {
+      const resText = width > 0 && height > 0 ? `${width}x${height}px (Full HD)` : '1080x1080px (Full HD)'
+      return {
+        profilePicUrl: picUrl,
+        displayName: fullName ? `${fullName} (@${username})` : `@${username}`,
+        resolution: resText,
+      }
+    }
+  } catch (err) {
+    log('warn', `Instagram: gallery-dl avatar extraction failed: ${(err as Error).message}`)
+  }
   return null
 }
 
@@ -117,6 +218,21 @@ export async function getInstagramInfo(
           }
         }
       } catch {}
+    }
+
+    // Method 0: gallery-dl Avatar Extractor (ดึงผ่าน mobile API ภายในโดยตรง ไม่ติด 429 และรองรับบัญชี Private)
+    if (!profilePicUrl) {
+      try {
+        const gdlResult = await getInstagramAvatarViaGalleryDl(cleanUsername, signal)
+        if (gdlResult && gdlResult.profilePicUrl) {
+          log('info', `Instagram: extracted profile avatar via gallery-dl successfully`)
+          profilePicUrl = gdlResult.profilePicUrl
+          displayName = gdlResult.displayName
+          resolution = gdlResult.resolution
+        }
+      } catch (err) {
+        log('warn', `Instagram: gallery-dl avatar extraction attempt failed: ${(err as Error).message}`)
+      }
     }
 
     if (!profilePicUrl) {
@@ -225,6 +341,30 @@ export async function getInstagramInfo(
             profilePicUrl = pic
             resolution = '1080x1080px (Full HD)'
           }
+        }
+
+        // 2.5 ลองดึงผ่าน Crawler User-Agent สำหรับบัญชีสาธารณะ
+        if (!profilePicUrl) {
+          try {
+            const crawlerResp = await safeFetch(`https://www.instagram.com/${cleanUsername}/`, {
+              headers: {
+                'User-Agent': UA_CRAWLER,
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+              },
+              signal,
+            })
+            if (crawlerResp.ok) {
+              const crawlerHtml = await crawlerResp.text()
+              const cOgMatch = crawlerHtml.match(/<meta\s+property="og:image"\s+content="([^"]+)"/i)
+              if (cOgMatch) {
+                const cPic = decodeAllHtmlEntities(cOgMatch[1])
+                if (!cPic.includes('instagram-logo') && !cPic.includes('rsrc.php') && !cPic.includes('static.cdninstagram.com')) {
+                  profilePicUrl = cPic
+                  resolution = '1080x1080px (Full HD)'
+                }
+              }
+            }
+          } catch {}
         }
 
         // 3. ถ้าไม่พบรูปและเป็น Error Page ให้โยน NOT_FOUND
