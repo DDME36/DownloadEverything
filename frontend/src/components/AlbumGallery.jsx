@@ -1,5 +1,5 @@
 import React, { useState } from 'react'
-import { Archive, Download, Image as ImageIcon, Video, ChevronLeft, ChevronRight, Loader2 } from 'lucide-react'
+import { Archive, Download, Image as ImageIcon, Video, ChevronLeft, ChevronRight, Loader2, Music } from 'lucide-react'
 import { resolveBackendUrl } from '../services/api'
 import DownloadProgressPanel from './DownloadProgressPanel'
 
@@ -27,6 +27,7 @@ export default function AlbumGallery({
 
   const selectedItem = items[selectedIndex] || items[0]
   const isSelectedVideo = selectedItem.kind === 'video'
+  const isSelectedAudio = selectedItem.kind === 'audio'
 
   const handlePrev = () => {
     setSelectedIndex((prev) => (prev > 0 ? prev - 1 : items.length - 1))
@@ -78,7 +79,29 @@ export default function AlbumGallery({
         </button>
 
         <div className="album-gallery__preview-box">
-          {selectedItem.thumbnail || selectedItem.url ? (
+          {isSelectedAudio ? (
+            <div className="album-gallery__audio-preview animate-scale-in">
+              {selectedItem.thumbnail ? (
+                <img
+                  src={resolveBackendUrl(selectedItem.thumbnail)}
+                  alt={selectedItem.title}
+                  className="album-gallery__audio-cover"
+                  loading="lazy"
+                  referrerPolicy="no-referrer"
+                />
+              ) : (
+                <div className="album-gallery__audio-icon-wrap">
+                  <Music size={52} className="album-gallery__audio-icon" />
+                </div>
+              )}
+              <div className="album-gallery__audio-info">
+                <span className="album-gallery__audio-title">{selectedItem.title || 'แผ่นเสียง / เสียงประกอบ'}</span>
+                {selectedItem.duration ? (
+                  <span className="album-gallery__audio-duration">ความยาว {Math.round(selectedItem.duration)} วินาที</span>
+                ) : null}
+              </div>
+            </div>
+          ) : selectedItem.thumbnail || selectedItem.url ? (
             <img
               src={resolveBackendUrl(selectedItem.thumbnail || selectedItem.url)}
               alt={selectedItem.title || `Item #${selectedIndex + 1}`}
@@ -95,6 +118,8 @@ export default function AlbumGallery({
           <span className="album-gallery__type-tag">
             {isSelectedVideo ? (
               <><Video size={13} /> วิดีโอ</>
+            ) : isSelectedAudio ? (
+              <><Music size={13} /> แผ่นเสียง</>
             ) : (
               <><ImageIcon size={13} /> รูปภาพ</>
             )}
@@ -133,10 +158,10 @@ export default function AlbumGallery({
             <button
               key={opt.id}
               type="button"
-              className="dl-btn dl-btn--primary"
+              className={`dl-btn ${isSelectedAudio ? 'dl-btn--audio' : 'dl-btn--primary'}`}
               onClick={() => onDownloadItem(opt, selectedItem)}
             >
-              <Download size={16} />
+              {isSelectedAudio ? <Music size={16} /> : <Download size={16} />}
               <span>{opt.label || `ดาวน์โหลดรายการที่ #${selectedIndex + 1}`}</span>
             </button>
           ))
@@ -151,15 +176,23 @@ export default function AlbumGallery({
             type="button"
             role="tab"
             aria-selected={idx === selectedIndex}
-            className={`album-thumbnail-btn ${idx === selectedIndex ? 'album-thumbnail-btn--active' : ''}`}
+            className={`album-thumbnail-btn ${idx === selectedIndex ? 'album-thumbnail-btn--active' : ''} ${item.kind === 'audio' ? 'album-thumbnail-btn--audio' : ''}`}
             onClick={() => setSelectedIndex(idx)}
           >
-            {item.thumbnail || item.url ? (
-              <img src={item.thumbnail || item.url} alt="" className="album-thumbnail-img" referrerPolicy="no-referrer" loading="lazy" />
+            {item.kind === 'audio' ? (
+              <div className="album-thumbnail-fallback album-thumbnail-fallback--audio">
+                {item.thumbnail ? (
+                  <img src={resolveBackendUrl(item.thumbnail)} alt="" className="album-thumbnail-img" referrerPolicy="no-referrer" loading="lazy" />
+                ) : (
+                  <Music size={18} />
+                )}
+              </div>
+            ) : item.thumbnail || item.url ? (
+              <img src={resolveBackendUrl(item.thumbnail || item.url)} alt="" className="album-thumbnail-img" referrerPolicy="no-referrer" loading="lazy" />
             ) : (
               <div className="album-thumbnail-fallback">{idx + 1}</div>
             )}
-            <span className="album-thumbnail-index">{idx + 1}</span>
+            <span className="album-thumbnail-index">{item.kind === 'audio' ? '🎵' : idx + 1}</span>
           </button>
         ))}
       </div>

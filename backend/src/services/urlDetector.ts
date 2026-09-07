@@ -191,9 +191,13 @@ export function detectUrl(url: string): DetectedUrl {
   // 5. TikTok
   if (isHost(hostname, 'tiktok.com')) {
     let identifier = ''
-    const videoMatch = pathname.match(/\/video\/(\d+)/)
-    if (videoMatch) {
-      identifier = videoMatch[1]
+    let contentType: ContentType = 'video'
+    const postMatch = pathname.match(/\/(?:video|photo)\/(\d+)/)
+    if (postMatch) {
+      identifier = postMatch[1]
+      if (pathname.includes('/photo/')) {
+        contentType = 'album'
+      }
     } else {
       const parts = pathname.split('/').filter(Boolean)
       identifier = parts[parts.length - 1] || ''
@@ -201,7 +205,7 @@ export function detectUrl(url: string): DetectedUrl {
 
     return {
       platform: 'tiktok',
-      contentType: 'video',
+      contentType,
       originalUrl: parsed.href,
       identifier,
     }

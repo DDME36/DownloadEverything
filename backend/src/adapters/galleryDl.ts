@@ -1,10 +1,10 @@
 import type { DownloaderAdapter } from './types'
 import type { Platform, MediaInfo, DownloadResult, DownloadStage, MediaItem } from '../types'
 import { AppError } from '../utils/errors'
-import { ensureTempDir, getCookiesPath } from '../utils/helpers'
+import { ensureTempDir, getCookiesPath, sanitizeFilename } from '../utils/helpers'
 import { killProcessTree, cleanupPartialFiles } from '../utils/process'
 import { join } from 'node:path'
-import { readdir, rm } from 'node:fs/promises'
+import { readdir, rm, mkdir } from 'node:fs/promises'
 import { getProxyForUrl } from '../utils/networkProxy'
 
 let galleryDlInstalled = false
@@ -87,7 +87,7 @@ export class GalleryDlAdapter implements DownloaderAdapter {
   readonly name = 'gallery-dl'
 
   canHandle(_url: string, platform: Platform): boolean {
-    if (!['instagram', 'twitter', 'reddit'].includes(platform)) return false
+    if (!['instagram', 'twitter', 'reddit', 'tiktok'].includes(platform)) return false
     if (galleryDlCommand === null && !galleryDlInstalled) return true
     return galleryDlInstalled
   }
@@ -151,62 +151,146 @@ export class GalleryDlAdapter implements DownloaderAdapter {
       }
     }
 
+    // 2. ดึง Directory Metadata (Message 2) ถ้ามี
+    let albumMeta: any = null
+    for (const itemData of rawObjects) {
+      if (Array.isArray(itemData) && itemData[0] === 2 && typeof itemData[1] === 'object' && itemData[1] !== null) {
+        albumMeta = itemData[1]
+      }
+    }
+
+    // 3. ตรวจสอบ platform จาก URL
+    const isTikTok = url.includes('tiktok.com')
+    const isTwitter = url.includes('twitter.com') || url.includes('x.com')
+    const isReddit = url.includes('reddit.com') || url.includes('redd.it')
+    const detectedPlatform: Platform = isTikTok ? 'tiktok' : isTwitter ? 'twitter' : isReddit ? 'reddit' : 'instagram'
+
     let index = 1
     for (const itemData of rawObjects) {
       // โครงสร้างของ gallery-dl -j:
       // Message.Url = 3; Message.Directory = 2; Message.Queue = 6.
-      // Only download URL messages represent files; queued URLs are other pages.
-      // หรือ Object ธรรมดา: { url: ... }
       let mediaUrl = ''
+      let post: any = null
       if (Array.isArray(itemData)) {
         if (itemData[0] === 3 && typeof itemData[1] === 'string') {
           mediaUrl = itemData[1]
+          post = itemData[2] || {}
         }
       } else if (typeof itemData === 'object' && itemData !== null) {
         mediaUrl = itemData.url || (Array.isArray(itemData.urls) ? itemData.urls[0] : '')
+        post = itemData
       }
 
       if (!mediaUrl || typeof mediaUrl !== 'string' || !/^https?:\/\//i.test(mediaUrl)) {
         continue
       }
 
-      const isVideo = mediaUrl.includes('.mp4') || mediaUrl.includes('.webm') || mediaUrl.includes('.m4v')
+      const isAudio =
+        post?.type === 'audio' ||
+        mediaUrl.includes('mime_type=audio') ||
+        mediaUrl.endsWith('.mp3') ||
+        mediaUrl.endsWith('.m4a') ||
+        mediaUrl.endsWith('.wav')
 
-      items.push({
-        id: `item_${index}`,
-        kind: isVideo ? 'video' : 'image',
-        title: `Item #${index}`,
-        url: mediaUrl,
-        thumbnail: mediaUrl,
-        options: [
-          {
-            id: `item_${index}_download`,
-            label: `ดาวน์โหลด ${isVideo ? 'วิดีโอ' : 'รูปภาพ'} #${index}`,
-            format: isVideo ? 'mp4' : 'jpg',
-            quality: 'HD',
-          },
-        ],
-      })
+      const isVideo =
+        !isAudio &&
+        (post?.type === 'video' ||
+          mediaUrl.includes('.mp4') ||
+          mediaUrl.includes('.webm') ||
+          mediaUrl.includes('.m4v'))
+
+      if (isAudio) {
+        const audioTitle = post?.music?.title || post?.title || 'เสียงต้นฉบับ / แผ่นเสียง'
+        const audioThumb = post?.music?.coverLarge || post?.music?.coverMedium || items[0]?.thumbnail || ''
+        items.push({
+          id: `item_${index}`,
+          kind: 'audio',
+          title: `แผ่นเสียง: ${audioTitle}`,
+          url: mediaUrl,
+          thumbnail: audioThumb,
+          duration: post?.music?.duration || post?.duration,
+          options: [
+            {
+              id: `item_${index}_download`,
+              label: `ดาวน์โหลด แผ่นเสียง (MP3)`,
+              format: 'mp3',
+              quality: 'Original',
+            },
+          ],
+        })
+      } else if (isVideo) {
+        items.push({
+          id: `item_${index}`,
+          kind: 'video',
+          title: post?.title ? `วิดีโอ #${index}: ${post.title.slice(0, 30)}` : `วิดีโอ #${index}`,
+          url: mediaUrl,
+          thumbnail: post?.thumbnail || mediaUrl,
+          options: [
+            {
+              id: `item_${index}_download`,
+              label: `ดาวน์โหลด วิดีโอ #${index} (HD)`,
+              format: 'mp4',
+              quality: 'HD',
+            },
+          ],
+        })
+      } else {
+        const imgNum = post?.num || index
+        items.push({
+          id: `item_${index}`,
+          kind: 'image',
+          title: `รูปภาพ #${imgNum}`,
+          url: mediaUrl,
+          thumbnail: mediaUrl,
+          options: [
+            {
+              id: `item_${index}_download`,
+              label: `ดาวน์โหลด รูปภาพ #${imgNum} (HD)`,
+              format: 'jpg',
+              quality: 'HD',
+            },
+          ],
+        })
+      }
       index++
     }
 
     if (items.length === 0) {
+      // ตรวจสอบ Message.Queue (6) ซึ่ง gallery-dl ส่งมาเมื่อเป็นลิงก์ย่อ เช่น vt.tiktok.com หรือ vm.tiktok.com
+      const queuedItem = rawObjects.find(
+        (obj) => Array.isArray(obj) && obj[0] === 6 && typeof obj[1] === 'string' && /^https?:\/\//i.test(obj[1])
+      )
+      if (queuedItem && queuedItem[1] !== url) {
+        return this.getInfo(queuedItem[1], signal)
+      }
+
       throw new AppError('GALLERY_EXTRACT_FAILED', 'ไม่พบไฟล์รูปภาพหรือวิดีโอที่สามารถดาวน์โหลดได้ในโพสต์หรืออัลบั้มนี้ (อาจเป็นบัญชีส่วนตัว หรือต้องการ Cookies ใน cookies.txt)', 404)
     }
 
+    const imageCount = items.filter((i) => i.kind === 'image').length
+    const hasAudio = items.some((i) => i.kind === 'audio')
     const albumZipOption = {
       id: 'album_zip',
-      label: `ดาวน์โหลดทั้งอัลบั้ม (${items.length} รายการเป็น ZIP)`,
+      label: `ดาวน์โหลดทั้งอัลบั้ม (${imageCount > 0 ? `${imageCount} รูปภาพ` : `${items.length} รายการ`}${hasAudio ? ' + แผ่นเสียง' : ''} เป็น ZIP)`,
       format: 'zip',
       quality: 'Original',
     }
 
+    const authorName = albumMeta?.author?.nickname || albumMeta?.user || ''
+    const postCaption = albumMeta?.desc || albumMeta?.title || ''
+    const displayTitle = postCaption
+      ? (authorName ? `${authorName}: ${postCaption.slice(0, 80)}` : postCaption.slice(0, 80))
+      : `${detectedPlatform === 'tiktok' ? 'TikTok' : 'Gallery'} (${items.length} รายการ)`
+
     return {
-      platform: 'instagram',
+      platform: detectedPlatform,
       contentType: 'album',
-      title: `Gallery (${items.length} items)`,
+      title: displayTitle,
+      thumbnail: items[0]?.thumbnail || items[0]?.url || '',
+      author: authorName,
+      uploader: albumMeta?.user || authorName,
       items,
-      options: [albumZipOption, ...items.flatMap(i => i.options)],
+      options: [albumZipOption, ...items.flatMap((i) => i.options)],
     }
   }
 
@@ -215,8 +299,96 @@ export class GalleryDlAdapter implements DownloaderAdapter {
     optionId: string,
     signal?: AbortSignal,
     onProgress?: (progress: number, stage: DownloadStage) => void,
-    cachedMeta?: { title?: string; filename?: string }
+    cachedMeta?: { title?: string; filename?: string; items?: MediaItem[] }
   ): Promise<DownloadResult> {
+    // 1. Direct Fast Fetch สำหรับชิ้นเดียวถ้ามี URL ใน cachedMeta
+    const itemMatch = optionId.match(/^item_(\d+)_download$/)
+    if (itemMatch && cachedMeta && Array.isArray((cachedMeta as any).items)) {
+      const matchedItem = (cachedMeta as any).items.find((it: any) => it.id === `item_${itemMatch[1]}`)
+      if (matchedItem?.url) {
+        try {
+          onProgress?.(20, 'downloading')
+          const res = await fetch(matchedItem.url, {
+            headers: {
+              'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+            },
+            signal,
+          })
+          if (res.ok) {
+            const ext = matchedItem.options?.[0]?.format || (matchedItem.kind === 'audio' ? 'mp3' : matchedItem.kind === 'video' ? 'mp4' : 'jpg')
+            let contentType = res.headers.get('content-type') || (matchedItem.kind === 'audio' ? 'audio/mpeg' : matchedItem.kind === 'video' ? 'video/mp4' : 'image/jpeg')
+            const tempDir = await ensureTempDir()
+            const uniqueId = Math.random().toString(36).substring(7)
+            const baseName = sanitizeFilename(matchedItem.title || `item_${itemMatch[1]}`)
+            const filename = `${baseName}.${ext}`
+            const filePath = join(tempDir, `item_${uniqueId}_${filename}`)
+            const buffer = await res.arrayBuffer()
+            await Bun.write(filePath, buffer)
+            onProgress?.(100, 'ready')
+            return {
+              filePath,
+              filename,
+              contentType,
+            }
+          }
+        } catch {}
+      }
+    }
+
+    // 2. Direct Fast Fetch สำหรับทั้งอัลบั้มถ้ามี items ใน cachedMeta
+    if (optionId === 'album_zip' && cachedMeta && Array.isArray((cachedMeta as any).items) && (cachedMeta as any).items.length > 0) {
+      try {
+        const items = (cachedMeta as any).items as MediaItem[]
+        const tempDir = await ensureTempDir()
+        const uniqueId = Math.random().toString(36).substring(7)
+        const outDir = join(tempDir, `album_${uniqueId}`)
+        await mkdir(outDir, { recursive: true })
+
+        onProgress?.(15, 'downloading')
+        let count = 0
+        await Promise.all(
+          items.map(async (item, idx) => {
+            if (!item.url) return
+            try {
+              const res = await fetch(item.url, {
+                headers: {
+                  'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+                },
+                signal,
+              })
+              if (!res.ok) return
+              const ext = item.options?.[0]?.format || (item.kind === 'audio' ? 'mp3' : item.kind === 'video' ? 'mp4' : 'jpg')
+              const baseName = sanitizeFilename(item.title || `item_${idx + 1}`)
+              const fname = `${String(idx + 1).padStart(2, '0')}_${baseName}.${ext}`
+              const buf = await res.arrayBuffer()
+              await Bun.write(join(outDir, fname), buf)
+              count++
+              onProgress?.(15 + Math.round((count / items.length) * 55), 'downloading')
+            } catch {}
+          })
+        )
+
+        const files = await collectFiles(outDir)
+        if (files.length > 0) {
+          onProgress?.(80, 'merging')
+          const zipPath = join(tempDir, `album_${uniqueId}.zip`)
+          await createZipArchive(outDir, zipPath)
+          await rm(outDir, { recursive: true, force: true }).catch(() => {})
+
+          const zipFilename = cachedMeta.title
+            ? `${sanitizeFilename(cachedMeta.title).slice(0, 60)}_album.zip`
+            : 'album.zip'
+
+          onProgress?.(100, 'ready')
+          return {
+            filePath: zipPath,
+            filename: zipFilename,
+            contentType: 'application/zip',
+          }
+        }
+      } catch {}
+    }
+
     const cmd = await getGalleryDlCommand()
     if (!cmd) {
       throw new AppError('GALLERY_DL_NOT_INSTALLED', 'เครื่องมือ gallery-dl ไม่ได้ถูกติดตั้งบนระบบ', 501)
@@ -227,7 +399,6 @@ export class GalleryDlAdapter implements DownloaderAdapter {
     const outDir = join(tempDir, `gdl_${uniqueId}`)
 
     // รองรับการเลือกดาวน์โหลดชิ้นเดียว (item_N_download)
-    const itemMatch = optionId.match(/^item_(\d+)_download$/)
     const extraArgs = itemMatch ? ['--range', itemMatch[1]] : []
 
     const cookiesPath = getCookiesPath()
@@ -273,12 +444,31 @@ export class GalleryDlAdapter implements DownloaderAdapter {
     if (itemMatch && files.length > 0) {
       const singleFile = files[0]
       const ext = singleFile.split('.').pop()?.toLowerCase() || 'jpg'
-      const isVideo = ext === 'mp4' || ext === 'webm'
+
+      let contentType = 'image/jpeg'
+      if (ext === 'mp3') contentType = 'audio/mpeg'
+      else if (ext === 'm4a') contentType = 'audio/mp4'
+      else if (ext === 'wav') contentType = 'audio/wav'
+      else if (ext === 'mp4' || ext === 'webm' || ext === 'm4v') contentType = 'video/mp4'
+      else if (ext === 'png') contentType = 'image/png'
+      else if (ext === 'webp') contentType = 'image/webp'
+
+      // หาชื่อไฟล์จาก cachedMeta ถ้ามี
+      let outFilename = `item_${itemMatch[1]}.${ext}`
+      const matchedItem = cachedMeta && Array.isArray((cachedMeta as any).items)
+        ? (cachedMeta as any).items.find((it: any) => it.id === `item_${itemMatch[1]}`)
+        : null
+      if (matchedItem?.title) {
+        outFilename = `${sanitizeFilename(matchedItem.title)}.${ext}`
+      } else if (cachedMeta?.title) {
+        outFilename = `${sanitizeFilename(cachedMeta.title)}_${itemMatch[1]}.${ext}`
+      }
+
       onProgress?.(100, 'ready')
       return {
         filePath: singleFile,
-        filename: cachedMeta?.filename || `item_${itemMatch[1]}.${ext}`,
-        contentType: isVideo ? 'video/mp4' : 'image/jpeg',
+        filename: outFilename,
+        contentType,
       }
     }
 
@@ -288,10 +478,14 @@ export class GalleryDlAdapter implements DownloaderAdapter {
     await createZipArchive(outDir, zipPath)
     await rm(outDir, { recursive: true, force: true }).catch(() => {})
 
+    const zipFilename = cachedMeta?.title
+      ? `${sanitizeFilename(cachedMeta.title).slice(0, 60)}_album.zip`
+      : 'album.zip'
+
     onProgress?.(100, 'ready')
     return {
       filePath: zipPath,
-      filename: cachedMeta?.filename || 'album.zip',
+      filename: zipFilename,
       contentType: 'application/zip',
     }
   }

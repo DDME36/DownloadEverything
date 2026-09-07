@@ -374,6 +374,21 @@ export const app = new Elysia()
             data = await directMediaAdapter.getInfo(detected.originalUrl, abortCtrl.signal)
             break
           case 'tiktok':
+            if (detected.contentType === 'album' || detected.originalUrl.includes('/photo/')) {
+              data = await galleryDlAdapter.getInfo(detected.originalUrl, abortCtrl.signal)
+            } else {
+              try {
+                data = await getGenericInfo(detected.originalUrl, detected.platform, abortCtrl.signal)
+              } catch (genericErr) {
+                // ถ้า yt-dlp ไม่รองรับ (เช่น เป็น short link vt.tiktok.com ที่ชี้ไปยัง photo post) ให้ลองดึงผ่าน gallery-dl
+                try {
+                  data = await galleryDlAdapter.getInfo(detected.originalUrl, abortCtrl.signal)
+                } catch {
+                  throw genericErr
+                }
+              }
+            }
+            break
           case 'twitter':
           case 'reddit':
           case 'vimeo':
@@ -400,8 +415,8 @@ export const app = new Elysia()
 
       clearTimeout(timer)
 
-      // Proxy thumbnail และรายการรูปในอัลบั้มสำหรับ Facebook/Instagram (รองรับ BACKEND_PUBLIC_URL สำหรับ Vercel+Oracle)
-      if (data && (data.platform === 'facebook' || data.platform === 'instagram')) {
+      // Proxy thumbnail และรายการรูปในอัลบั้มสำหรับ Facebook/Instagram/TikTok (รองรับ BACKEND_PUBLIC_URL สำหรับ Vercel+Oracle)
+      if (data && (data.platform === 'facebook' || data.platform === 'instagram' || data.platform === 'tiktok')) {
         const backendBase = process.env.BACKEND_PUBLIC_URL?.replace(/\/$/, '') || ''
         const wrapProxy = (rawUrl?: string) => {
           if (!rawUrl) return rawUrl

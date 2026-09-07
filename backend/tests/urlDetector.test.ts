@@ -43,6 +43,10 @@ describe('URL Detector Tests', () => {
   it('should detect other supported platforms', () => {
     expect(detectUrl('https://soundcloud.com/artist/song-title').platform).toBe('soundcloud')
     expect(detectUrl('https://www.tiktok.com/@user/video/1234567890123456789').platform).toBe('tiktok')
+    expect(detectUrl('https://www.tiktok.com/@user/video/1234567890123456789').contentType).toBe('video')
+    expect(detectUrl('https://www.tiktok.com/@user/photo/7646726205856582930').platform).toBe('tiktok')
+    expect(detectUrl('https://www.tiktok.com/@user/photo/7646726205856582930').contentType).toBe('album')
+    expect(detectUrl('https://www.tiktok.com/@user/photo/7646726205856582930').identifier).toBe('7646726205856582930')
     expect(detectUrl('https://x.com/user/status/1234567890123456789').platform).toBe('twitter')
     expect(detectUrl('https://twitter.com/user/status/1234567890123456789').platform).toBe('twitter')
     expect(detectUrl('https://www.reddit.com/r/videos/comments/abcde/cool_video/').platform).toBe('reddit')

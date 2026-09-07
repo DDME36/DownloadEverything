@@ -1810,6 +1810,74 @@ body::before {
   padding: 40px;
 }
 
+.album-gallery__audio-preview {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  padding: 36px 24px;
+  width: 100%;
+  max-width: 420px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(168, 85, 247, 0.2);
+  border-radius: var(--radius-md);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+}
+
+.album-gallery__audio-cover {
+  width: 110px;
+  height: 110px;
+  border-radius: 50%;
+  object-fit: cover;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.6);
+  border: 2px solid rgba(168, 85, 247, 0.5);
+  animation: spin 20s linear infinite;
+}
+
+.album-gallery__audio-icon-wrap {
+  width: 100px;
+  height: 100px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, rgba(168, 85, 247, 0.2), rgba(6, 182, 212, 0.2));
+  border: 2px solid rgba(168, 85, 247, 0.4);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #a855f7;
+}
+
+.album-gallery__audio-info {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: 6px;
+}
+
+.album-gallery__audio-title {
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: var(--text-primary);
+  max-width: 320px;
+  line-height: 1.4;
+}
+
+.album-gallery__audio-duration {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+}
+
+.album-thumbnail-fallback--audio {
+  background: linear-gradient(135deg, rgba(168, 85, 247, 0.25), rgba(6, 182, 212, 0.25));
+  color: #a855f7;
+}
+
+.album-thumbnail-btn--audio.album-thumbnail-btn--active {
+  border-color: #06b6d4;
+  box-shadow: 0 0 10px rgba(6, 182, 212, 0.5);
+}
+
 .album-gallery__type-tag {
   position: absolute;
   top: 10px;
