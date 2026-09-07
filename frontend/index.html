@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="th" data-theme="obsidian" style="background-color: #101016; color-scheme: dark;">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="description" content="Zenload - ดาวน์โหลดวิดีโอ เพลง และรูปภาพจาก YouTube, Instagram, Facebook, SoundCloud, TikTok และอีกมากมาย เร็ว คมชัด ปลอดภัย" />
+  <title>Zenload – Media Downloader</title>
+  
+  <!-- ป้องกันแสงวาบขาว (Anti-FOUC & Dark Canvas Initialization) -->
+  <meta name="color-scheme" content="dark" />
+  <meta name="theme-color" content="#101016" />
+  <style>
+    :root, html, body {
+      background-color: #101016 !important;
+      color: #eeedf5;
+      color-scheme: dark;
+      margin: 0;
+      padding: 0;
+      font-family: 'Outfit', 'Noto Sans Thai', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      text-rendering: optimizeLegibility;
+      -webkit-font-smoothing: antialiased;
+      -moz-osx-font-smoothing: grayscale;
+    }
+    /* Self-hosted Local Fonts (Zero FOUT / Instant Display) */
+    @font-face {
+      font-family: 'Outfit';
+      font-style: normal;
+      font-weight: 400;
+      font-display: block;
+      src: url('/fonts/outfit-400.woff2') format('woff2');
+    }
+    @font-face {
+      font-family: 'Outfit';
+      font-style: normal;
+      font-weight: 500;
+      font-display: block;
+      src: url('/fonts/outfit-500.woff2') format('woff2');
+    }
+    @font-face {
+      font-family: 'Outfit';
+      font-style: normal;
+      font-weight: 600;
+      font-display: block;
+      src: url('/fonts/outfit-600.woff2') format('woff2');
+    }
+    @font-face {
+      font-family: 'Outfit';
+      font-style: normal;
+      font-weight: 700;
+      font-display: block;
+      src: url('/fonts/outfit-700.woff2') format('woff2');
+    }
+    @font-face {
+      font-family: 'Noto Sans Thai';
+      font-style: normal;
+      font-weight: 400;
+      font-display: block;
+      src: url('/fonts/noto-sans-thai-400.woff2') format('woff2');
+    }
+    @font-face {
+      font-family: 'Noto Sans Thai';
+      font-style: normal;
+      font-weight: 500;
+      font-display: block;
+      src: url('/fonts/noto-sans-thai-500.woff2') format('woff2');
+    }
+    @font-face {
+      font-family: 'Noto Sans Thai';
+      font-style: normal;
+      font-weight: 600;
+      font-display: block;
+      src: url('/fonts/noto-sans-thai-600.woff2') format('woff2');
+    }
+    @font-face {
+      font-family: 'Noto Sans Thai';
+      font-style: normal;
+      font-weight: 700;
+      font-display: block;
+      src: url('/fonts/noto-sans-thai-700.woff2') format('woff2');
+    }
+  </style>
+
+  <!-- Preload Core Fonts for Instant Rendering (Eliminates FOUT / Font Jump) -->
+  <link rel="preload" href="/fonts/outfit-400.woff2" as="font" type="font/woff2" crossorigin />
+  <link rel="preload" href="/fonts/outfit-600.woff2" as="font" type="font/woff2" crossorigin />
+  <link rel="preload" href="/fonts/outfit-700.woff2" as="font" type="font/woff2" crossorigin />
+  <link rel="preload" href="/fonts/noto-sans-thai-400.woff2" as="font" type="font/woff2" crossorigin />
+  <link rel="preload" href="/fonts/noto-sans-thai-600.woff2" as="font" type="font/woff2" crossorigin />
+  <link rel="preload" href="/fonts/noto-sans-thai-700.woff2" as="font" type="font/woff2" crossorigin />
+
+  <!-- PWA & Mobile Web Apps Setup -->
+  <link rel="manifest" href="/manifest.json" />
+  <link rel="icon" type="image/png" href="/favicon-32.png?v=zenload3" />
+  <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32.png?v=zenload3" />
+  <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
+  
+  <!-- iOS & Android App Modes -->
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="Zenload" />
+</head>
+<body style="background-color: #101016; color-scheme: dark;">
+  <div id="root"></div>
+  <script type="module" src="/src/main.jsx"></script>
+</body>
+</html>
+
+
+

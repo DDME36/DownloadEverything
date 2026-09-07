@@ -1,0 +1,702 @@
+import { Elysia, t } from 'elysia'
+import { cors } from '@elysiajs/cors'
+import { detectUrl, isValidUrl } from './services/urlDetector'
+import { getYoutubeInfo, downloadYoutube } from './services/youtube'
+import { getInstagramInfo, downloadInstagram } from './services/instagram'
+import { getFacebookInfo, downloadFacebook } from './services/facebook'
+import { getSoundcloudInfo, downloadSoundcloud } from './services/soundcloud'
+import { getGenericInfo, downloadGeneric } from './services/generic'
+import { AppError } from './utils/errors'
+import { log, initCookies, getTempDir, getLogFilePath } from './utils/helpers'
+import { mediaCache } from './utils/cache'
+import { saveBoundedStream } from './utils/streamFile'
+import { unlink } from 'node:fs/promises'
+import { join, resolve } from 'node:path'
+import type { ApiResponse, DownloadResult, DownloadStage } from './types'
+import { DirectMediaAdapter } from './adapters/directMedia'
+import { GalleryDlAdapter } from './adapters/galleryDl'
+import {
+  parseAndValidateUrl,
+  isAllowedImageProxyHost,
+  assertSafePublicDestination,
+  safeFetch,
+} from './utils/security'
+import {
+  analyzeSemaphore,
+  downloadSemaphore,
+  analyzeRateLimiter,
+  downloadRateLimiter,
+  assertSufficientDiskSpace,
+  MAX_DOWNLOAD_DURATION_MS,
+  MAX_ANALYZE_DURATION_MS,
+  MAX_FILE_SIZE_MB,
+} from './utils/limits'
+import {
+  initJobManager,
+  createJob,
+  verifyJobOwnership,
+  setJobDownloading,
+  updateJobProgress,
+  completeJob,
+  failJob,
+  abortJob,
+  ensureJobDir,
+} from './services/jobManager'
+
+const PORT = parseInt(process.env.PORT || '3001', 10)
+const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36'
+const directMediaAdapter = new DirectMediaAdapter()
+const galleryDlAdapter = new GalleryDlAdapter()
+
+function getClientIp(request: Request, server?: any): string {
+  const forwarded = request.headers.get('x-forwarded-for')
+  if (forwarded) {
+    return forwarded.split(',')[0].trim()
+  }
+  const realIp = request.headers.get('x-real-ip')
+  if (realIp) return realIp.trim()
+  const cfIp = request.headers.get('cf-connecting-ip')
+  if (cfIp) return cfIp.trim()
+  try {
+    const ip = server?.requestIP(request)?.address
+    if (ip) return ip
+  } catch {}
+  return '127.0.0.1'
+}
+
+/**
+ * Background Worker รันงานดาวน์โหลดในพื้นหลัง
+ */
+async function runDownloadJob(
+  jobId: string,
+  url: string,
+  option: string,
+  platform: string,
+  identifier: string | undefined,
+  abortController: AbortController
+) {
+  try {
+    await downloadSemaphore.acquire()
+  } catch (queueErr) {
+    const msg = queueErr instanceof Error ? queueErr.message : String(queueErr)
+    failJob(jobId, msg)
+    log('error', `Job ${jobId} failed to acquire download semaphore: ${msg}`)
+    return
+  }
+
+  const signal = abortController.signal
+  if (signal.aborted) {
+    downloadSemaphore.release()
+    return
+  }
+
+  setJobDownloading(jobId)
+
+  // Max duration timeout
+  const timeoutTimer = setTimeout(() => {
+    log('warn', `Job ${jobId} exceeded max duration (${MAX_DOWNLOAD_DURATION_MS}ms), aborting...`)
+    abortJob(jobId).catch(() => {})
+  }, MAX_DOWNLOAD_DURATION_MS)
+
+  try {
+    let result: DownloadResult
+    const progressCallback = (progress: number, stage?: DownloadStage) => {
+      if (!signal.aborted) {
+        updateJobProgress(jobId, progress, stage)
+      }
+    }
+
+    const cachedMeta = mediaCache.get(url)
+    const detected = detectUrl(url)
+
+    if (option.startsWith('item_') || option === 'album_zip') {
+      result = await galleryDlAdapter.download(url, option, signal, progressCallback, cachedMeta || undefined)
+    } else {
+      switch (platform) {
+        case 'direct':
+          result = await directMediaAdapter.download(url, option, signal, progressCallback, cachedMeta || undefined)
+          break
+        case 'youtube':
+          result = await downloadYoutube(url, option, signal, progressCallback, cachedMeta || undefined)
+          break
+        case 'instagram':
+          result = await downloadInstagram(url, identifier || '', detected.contentType, option, signal, progressCallback, cachedMeta || undefined)
+          break
+        case 'facebook':
+          result = await downloadFacebook(url, identifier || '', detected.contentType, option, signal, progressCallback, cachedMeta || undefined)
+          break
+        case 'soundcloud':
+          result = await downloadSoundcloud(url, option, signal, progressCallback, cachedMeta || undefined)
+          break
+        case 'tiktok':
+        case 'twitter':
+        case 'reddit':
+        case 'vimeo':
+        case 'dailymotion':
+        case 'twitch':
+          result = await downloadGeneric(url, option, platform, signal, progressCallback, cachedMeta || undefined)
+          break
+        default:
+          result = await downloadYoutube(url, option, signal, progressCallback, cachedMeta || undefined)
+      }
+    }
+
+    if (result.stream && !result.filePath) {
+      const jobDir = await ensureJobDir(jobId)
+      const sanitizedFilename = (result.filename || 'download.bin').replace(/[/\\?%*:|"<>]/g, '_')
+      const targetPath = join(jobDir, sanitizedFilename)
+      await saveBoundedStream(result.stream, targetPath, MAX_FILE_SIZE_MB * 1024 * 1024, signal)
+      result.filePath = targetPath
+    }
+
+    if (signal.aborted) {
+      if (result.filePath) {
+        try { await unlink(result.filePath) } catch {}
+      }
+      return
+    }
+
+    if (!result.filePath || !(await Bun.file(result.filePath).exists())) {
+      throw new AppError('DOWNLOAD_FAILED', 'ไฟล์ที่ดาวน์โหลดไม่สมบูรณ์หรือไม่พบไฟล์')
+    }
+
+    const fileSize = Bun.file(result.filePath).size
+    if (fileSize > MAX_FILE_SIZE_MB * 1024 * 1024) {
+      await unlink(result.filePath).catch(() => {})
+      throw new AppError('FILE_TOO_LARGE', 'ไฟล์ผลลัพธ์มีขนาดเกินขีดจำกัด', 413)
+    }
+    if (fileSize <= 30) {
+      try { await unlink(result.filePath) } catch {}
+      throw new AppError('EMPTY_FILE', 'ไฟล์ที่ดาวน์โหลดว่างเปล่าหรือเสียหาย')
+    }
+
+    completeJob(jobId, result.filePath, result.filename, result.contentType, fileSize)
+    log('info', `Job ${jobId} completed successfully (${(fileSize / 1024 / 1024).toFixed(1)} MB)`)
+  } catch (error) {
+    clearTimeout(timeoutTimer)
+    if (!signal.aborted) {
+      const errorMsg = error instanceof Error ? error.message : String(error)
+      const errorStack = error instanceof Error ? (error.stack || error.message) : String(error)
+      failJob(jobId, errorMsg)
+      log('error', `Job ${jobId} failed: ${errorStack}`)
+    }
+  } finally {
+    clearTimeout(timeoutTimer)
+    downloadSemaphore.release()
+    if (process.env.NODE_ENV === 'production') Bun.gc(true)
+  }
+}
+
+export const app = new Elysia()
+  .use(cors({
+    origin: process.env.FRONTEND_URL || '*',
+    methods: ['GET', 'POST', 'OPTIONS'],
+    exposeHeaders: ['Content-Disposition', 'Content-Length', 'Accept-Ranges'],
+  }))
+
+  // ===== Favicon =====
+  .get('/favicon.ico', ({ set }) => { set.status = 204; return '' })
+
+  // ===== Health Check & Stats =====
+  .get('/health', () => ({ 
+    status: 'ok', 
+    name: 'Zentyr Fetch',
+    time: new Date().toISOString(),
+    concurrency: {
+      analyzing: analyzeSemaphore.getActiveCount(),
+      analyzingQueue: analyzeSemaphore.getQueueLength(),
+      downloading: downloadSemaphore.getActiveCount(),
+      downloadingQueue: downloadSemaphore.getQueueLength()
+    }
+  }))
+
+  // ===== ปิด Cookie Leak และแสดงเฉพาะ System Status ปลอดภัย =====
+  .get('/api/system/status', async () => {
+    let ytdlpOk = false
+    try {
+      const proc = Bun.spawn(['yt-dlp', '--version'], { stdout: 'ignore', stderr: 'ignore' })
+      ytdlpOk = (await proc.exited) === 0
+    } catch {}
+
+    let denoOk = false
+    try {
+      const proc = Bun.spawn(['deno', '--version'], { stdout: 'ignore', stderr: 'ignore' })
+      denoOk = (await proc.exited) === 0
+    } catch {}
+
+    let ffmpegOk = false
+    try {
+      const proc = Bun.spawn(['ffmpeg', '-version'], { stdout: 'ignore', stderr: 'ignore' })
+      ffmpegOk = (await proc.exited) === 0
+    } catch {}
+
+    return {
+      success: true,
+      name: 'Zentyr Fetch',
+      status: 'ok',
+      tools: {
+        ytDlp: ytdlpOk,
+        deno: denoOk,
+        ffmpeg: ffmpegOk,
+      },
+      concurrency: {
+        analyzing: analyzeSemaphore.getActiveCount(),
+        analyzingQueue: analyzeSemaphore.getQueueLength(),
+        downloading: downloadSemaphore.getActiveCount(),
+        downloadingQueue: downloadSemaphore.getQueueLength(),
+      }
+    }
+  })
+
+  // ===== Proxy รูปภาพ พร้อมการป้องกัน SSRF แบบเข้มงวด =====
+  .get('/api/proxy-image', async ({ query, set }) => {
+    const imageUrl = query.url as string
+    if (!imageUrl) {
+      set.status = 400
+      return 'Missing url parameter'
+    }
+
+    let parsed: URL
+    try {
+      parsed = parseAndValidateUrl(imageUrl)
+    } catch (e) {
+      set.status = 400
+      return (e as Error).message
+    }
+
+    // SSRF Check: Image Proxy Domain Allowlist or Public Destination Assert
+    if (!isAllowedImageProxyHost(parsed.hostname)) {
+      try {
+        await assertSafePublicDestination(parsed.hostname)
+      } catch (e) {
+        set.status = 403
+        return 'Destination not allowed for image proxy'
+      }
+    }
+
+    const abortCtrl = new AbortController()
+    const timer = setTimeout(() => abortCtrl.abort(), 10000)
+
+    try {
+      const resp = await safeFetch(parsed.href, {
+        headers: { 'User-Agent': UA },
+        signal: abortCtrl.signal,
+      })
+      clearTimeout(timer)
+
+      if (!resp.ok) {
+        set.status = resp.status
+        return 'Failed to fetch image'
+      }
+
+      const contentType = resp.headers.get('content-type') || 'image/jpeg'
+      if (!contentType.startsWith('image/')) {
+        set.status = 400
+        return 'Target resource is not an image'
+      }
+
+      const contentLength = parseInt(resp.headers.get('content-length') || '0', 10)
+      if (contentLength > 15 * 1024 * 1024) {
+        set.status = 413
+        return 'Image size exceeds maximum limit'
+      }
+
+      set.headers['content-type'] = contentType
+      set.headers['cache-control'] = 'public, max-age=3600'
+      set.headers['access-control-allow-origin'] = '*'
+
+      return new Response(resp.body, {
+        headers: { 'Content-Type': contentType },
+      })
+    } catch (error) {
+      clearTimeout(timer)
+      log('error', 'Image proxy failed', { url: imageUrl, error: (error as Error).message })
+      set.status = 502
+      return 'Image proxy failed'
+    }
+  })
+
+  // ===== วิเคราะห์ลิงก์ (Safe Parse, Concurrency & Rate Limit Guard) =====
+  .post('/api/analyze', async ({ body, set, request, server }): Promise<ApiResponse> => {
+    const { url } = body
+    const clientIp = getClientIp(request, server)
+
+    // 1. IP Rate Limiting
+    analyzeRateLimiter.check(clientIp)
+
+    if (!url || !isValidUrl(url)) {
+      set.status = 400
+      return { success: false, error: { code: 'INVALID_URL', message: 'กรุณาใส่ลิงก์ที่ถูกต้องครับ' } }
+    }
+
+    // 2. ตรวจสอบจาก Cache ก่อนดึงข้อมูลหนัก
+    const cachedData = mediaCache.get(url)
+    if (cachedData) {
+      return { success: true, data: cachedData }
+    }
+
+    // 3. จอง Semaphore จำกัด Concurrency & Queue Length
+    await analyzeSemaphore.acquire()
+
+    const abortCtrl = new AbortController()
+    const timer = setTimeout(() => abortCtrl.abort(), MAX_ANALYZE_DURATION_MS)
+
+    try {
+      const detected = detectUrl(url)
+      log('info', `Analyzing (${clientIp}): ${detected.platform} → ${url}`)
+
+      let data: any
+      if ((detected.contentType === 'album' || (detected.platform === 'instagram' && detected.contentType === 'post')) && galleryDlAdapter.canHandle(detected.originalUrl, detected.platform)) {
+        try {
+          data = await galleryDlAdapter.getInfo(detected.originalUrl, abortCtrl.signal)
+        } catch {}
+      }
+
+      if (!data) {
+        switch (detected.platform) {
+          case 'youtube':
+            data = await getYoutubeInfo(detected.originalUrl, abortCtrl.signal)
+            break
+          case 'instagram':
+            data = await getInstagramInfo(detected.originalUrl, detected.identifier, detected.contentType, abortCtrl.signal)
+            break
+          case 'facebook':
+            data = await getFacebookInfo(detected.originalUrl, detected.identifier, detected.contentType, abortCtrl.signal)
+            break
+          case 'soundcloud':
+            data = await getSoundcloudInfo(detected.originalUrl, abortCtrl.signal)
+            break
+          case 'direct':
+            data = await directMediaAdapter.getInfo(detected.originalUrl, abortCtrl.signal)
+            break
+          case 'tiktok':
+          case 'twitter':
+          case 'reddit':
+          case 'vimeo':
+          case 'dailymotion':
+          case 'twitch':
+            data = await getGenericInfo(detected.originalUrl, detected.platform, abortCtrl.signal)
+            break
+          default:
+            try {
+              data = await getYoutubeInfo(detected.originalUrl, abortCtrl.signal)
+            } catch {
+              set.status = 400
+              return {
+                success: false,
+                error: {
+                  code: 'UNSUPPORTED',
+                  message: 'ยังไม่รองรับลิงก์นี้ครับ',
+                  suggestion: 'ลองใช้ลิงก์จาก YouTube, Instagram, Facebook, TikTok, Twitter, Reddit, Vimeo, Dailymotion, Twitch หรือ SoundCloud',
+                },
+              }
+            }
+        }
+      }
+
+      clearTimeout(timer)
+
+      // Proxy thumbnail สำหรับ Facebook/Instagram (รองรับ BACKEND_PUBLIC_URL สำหรับ Vercel+Oracle)
+      if (data && data.thumbnail && (data.platform === 'facebook' || data.platform === 'instagram')) {
+        const backendBase = process.env.BACKEND_PUBLIC_URL?.replace(/\/$/, '') || ''
+        data.thumbnail = `${backendBase}/api/proxy-image?url=${encodeURIComponent(data.thumbnail)}`
+      }
+
+      // บันทึก Cache (10 นาที)
+      if (data) {
+        mediaCache.set(url, data)
+      }
+
+      return { success: true, data }
+    } catch (error) {
+      clearTimeout(timer)
+      return handleError(error, set)
+    } finally {
+      analyzeSemaphore.release()
+    }
+  }, {
+    body: t.Object({
+      url: t.String()
+    })
+  })
+
+  // ===== เริ่มงานดาวน์โหลด (POST: รองรับ Access Token & SQLite Persistence) =====
+  .post('/api/download/start', async ({ body, set, request, server }) => {
+    const { url, option } = body
+    const clientIp = getClientIp(request, server)
+
+    // 1. ตรวจ Rate Limit
+    downloadRateLimiter.check(clientIp)
+
+    if (!url || !option || !isValidUrl(url)) {
+      set.status = 400
+      return { success: false, error: { code: 'INVALID_PARAMS', message: 'กรุณาระบุ URL และตัวเลือกที่ถูกต้อง' } }
+    }
+
+    // 2. ตรวจสอบ Queue Admission (ห้ามสร้าง Job ใน SQLite หากคิวเต็ม)
+    if (!downloadSemaphore.canAdmit()) {
+      const busyErr = downloadSemaphore.getBusyError()
+      set.status = busyErr.statusCode
+      return {
+        success: false,
+        error: {
+          code: busyErr.code,
+          message: busyErr.message,
+        },
+      }
+    }
+
+    // 3. ตรวจสอบพื้นที่ว่างบนดิสก์
+    await assertSufficientDiskSpace(getTempDir())
+
+    const detected = detectUrl(url)
+
+    // 4. สร้าง Job ลง SQLite พร้อม Access Token
+    const { jobId, accessToken, abortController } = createJob({
+      url: detected.originalUrl,
+      optionId: option,
+      platform: detected.platform,
+      identifier: detected.identifier,
+    })
+
+    // 5. สั่งรัน Worker ในพื้นหลังทันที
+    runDownloadJob(jobId, detected.originalUrl, option, detected.platform, detected.identifier, abortController)
+
+    return { success: true, jobId, accessToken }
+  }, {
+    body: t.Object({
+      url: t.String(),
+      option: t.String(),
+    })
+  })
+
+  // ===== ตรวจสอบสถานะการดาวน์โหลด (พร้อมตรวจ Access Token) =====
+  .get('/api/download/status', ({ query, headers, set }) => {
+    const jobId = query.jobId as string
+    const token = (query.token as string) || (headers['x-job-token'] as string)
+
+    if (!jobId) {
+      set.status = 400
+      return { success: false, error: { code: 'MISSING_JOB_ID', message: 'กรุณาระบุ jobId' } }
+    }
+
+    try {
+      const job = verifyJobOwnership(jobId, token)
+      return {
+        success: true,
+        status: job.status,
+        stage: job.stage || 'downloading',
+        progress: job.progress,
+        error: job.error,
+        filename: job.filename,
+        fileSize: job.file_size,
+      }
+    } catch (err) {
+      if (err instanceof AppError) {
+        set.status = err.statusCode
+        return { success: false, error: { code: err.code, message: err.message } }
+      }
+      set.status = 500
+      return { success: false, error: { code: 'INTERNAL_ERROR', message: 'เกิดข้อผิดพลาดในการตรวจสอบสถานะ' } }
+    }
+  }, {
+    query: t.Object({
+      jobId: t.String(),
+      token: t.Optional(t.String()),
+    })
+  })
+
+  // ===== ยกเลิกงานดาวน์โหลดบนเซิร์ฟเวอร์ (POST) =====
+  .post('/api/download/cancel', async ({ body, query, headers, set }) => {
+    const jobId = ((body as any)?.jobId || query.jobId) as string
+    const token = ((body as any)?.token || query.token || headers['x-job-token']) as string
+
+    if (!jobId) {
+      set.status = 400
+      return { success: false, error: { code: 'MISSING_JOB_ID', message: 'กรุณาระบุ jobId' } }
+    }
+
+    try {
+      verifyJobOwnership(jobId, token)
+      await abortJob(jobId)
+      log('info', `Client canceled download job: ${jobId}`)
+      return { success: true }
+    } catch (err) {
+      if (err instanceof AppError) {
+        set.status = err.statusCode
+        return { success: false, error: { code: err.code, message: err.message } }
+      }
+      set.status = 500
+      return { success: false, error: { code: 'INTERNAL_ERROR', message: 'เกิดข้อผิดพลาดในการยกเลิก' } }
+    }
+  }, {
+    body: t.Optional(t.Object({
+      jobId: t.Optional(t.String()),
+      token: t.Optional(t.String()),
+    })),
+    query: t.Optional(t.Object({
+      jobId: t.Optional(t.String()),
+      token: t.Optional(t.String()),
+    }))
+  })
+
+  // ===== ดู Log การทำงานของ Backend ตลอดเวลา (GET) =====
+  .get('/api/logs', async () => {
+    try {
+      const logPath = getLogFilePath()
+      const file = Bun.file(logPath)
+      if (await file.exists()) {
+        const text = await file.text()
+        const lines = text.trim().split('\n')
+        return {
+          success: true,
+          totalLines: lines.length,
+          logFilePath: logPath,
+          recentLogs: lines.slice(-300),
+        }
+      }
+      return { success: true, totalLines: 0, logFilePath: logPath, recentLogs: [] }
+    } catch (err: any) {
+      return { success: false, error: err.message }
+    }
+  })
+
+  // ===== ดาวน์โหลดไฟล์ (รองรับ Range / Resume และไม่สะสมใน JS RAM) =====
+  .get('/api/download', async ({ query, headers, set }) => {
+    const jobId = query.jobId as string
+    const token = (query.token as string) || (headers['x-job-token'] as string)
+
+    // 1. ดึงไฟล์จาก Background Job
+    if (jobId) {
+      try {
+        const job = verifyJobOwnership(jobId, token)
+
+        if (job.status === 'failed') {
+          set.status = 500
+          return { success: false, error: { code: 'DOWNLOAD_FAILED', message: job.error || 'การดาวน์โหลดล้มเหลว' } }
+        }
+
+        if (job.status === 'aborted') {
+          set.status = 499
+          return { success: false, error: { code: 'DOWNLOAD_ABORTED', message: 'การดาวน์โหลดถูกยกเลิกแล้ว' } }
+        }
+
+        if (job.status !== 'completed' || !job.file_path) {
+          set.status = 400
+          return { success: false, error: { code: 'JOB_NOT_READY', message: 'ไฟล์ดาวน์โหลดยังไม่พร้อมใช้งาน' } }
+        }
+
+        const file = Bun.file(job.file_path)
+        if (!(await file.exists())) {
+          set.status = 500
+          return { success: false, error: { code: 'FILE_NOT_FOUND', message: 'ไม่พบไฟล์บนเซิร์ฟเวอร์ ลองใหม่อีกครั้ง' } }
+        }
+
+        const fileSize = file.size
+        if (fileSize === 0) {
+          set.status = 500
+          return { success: false, error: { code: 'EMPTY_FILE', message: 'ไฟล์ที่ดาวน์โหลดว่างเปล่า (0 byte)' } }
+        }
+
+        const encodedFilename = encodeURIComponent(job.filename || 'download')
+        set.headers['content-type'] = job.content_type || 'application/octet-stream'
+        set.headers['content-length'] = String(fileSize)
+        set.headers['content-disposition'] = `attachment; filename="${encodedFilename}"; filename*=UTF-8''${encodedFilename}`
+        set.headers['accept-ranges'] = 'bytes'
+
+        // Bun.file รองรับ Range Request 206 อัตโนมัติสำหรับการ Pause/Resume
+        return file
+      } catch (err) {
+        if (err instanceof AppError) {
+          set.status = err.statusCode
+          return { success: false, error: { code: err.code, message: err.message } }
+        }
+        set.status = 500
+        return { success: false, error: { code: 'INTERNAL_ERROR', message: 'เกิดข้อผิดพลาดในการดึงไฟล์' } }
+      }
+    }
+
+    set.status = 400
+    return { success: false, error: { code: 'MISSING_JOB_ID', message: 'กรุณาระบุ jobId เพื่อดาวน์โหลดไฟล์' } }
+  }, {
+    query: t.Object({
+      jobId: t.String(),
+      token: t.Optional(t.String()),
+    })
+  })
+
+  // ===== Global Error Handler =====
+  .onError(({ code, error, set }) => {
+    if (code === 'NOT_FOUND') {
+      set.status = 404
+      return { success: false, error: { code: 'NOT_FOUND', message: 'ไม่พบเส้นทางหรือหน้าที่ร้องขอ' } }
+    }
+    if (error instanceof AppError) {
+      set.status = error.statusCode
+      return { success: false, error: { code: error.code, message: error.message, suggestion: error.suggestion } }
+    }
+    log('error', 'Unhandled error', { message: (error as Error).message })
+    set.status = 500
+    return { success: false, error: { code: 'INTERNAL_ERROR', message: 'เกิดข้อผิดพลาดที่ไม่คาดคิด กรุณาลองใหม่ครับ' } }
+  })
+
+// ===== Serve Frontend (Production or when dist exists) =====
+const frontendDistPath = resolve(import.meta.dir, '../../frontend/dist')
+const distExists = await Bun.file(join(frontendDistPath, 'index.html')).exists()
+
+if (process.env.NODE_ENV === 'production' || distExists) {
+  app.get('*', async ({ path, set }) => {
+    if (path.startsWith('/api/')) {
+      set.status = 404
+      return { error: 'API endpoint not found' }
+    }
+
+    const cleanPath = path === '/' ? 'index.html' : path.replace(/^\//, '')
+    const filePath = join(frontendDistPath, cleanPath)
+    const file = Bun.file(filePath)
+
+    if (await file.exists()) {
+      if (cleanPath.endsWith('.js')) set.headers['content-type'] = 'application/javascript'
+      else if (cleanPath.endsWith('.css')) set.headers['content-type'] = 'text/css'
+      else if (cleanPath.endsWith('.png')) set.headers['content-type'] = 'image/png'
+      else if (cleanPath.endsWith('.jpg') || cleanPath.endsWith('.jpeg')) set.headers['content-type'] = 'image/jpeg'
+      else if (cleanPath.endsWith('.svg')) set.headers['content-type'] = 'image/svg+xml'
+      else if (cleanPath.endsWith('.ico')) set.headers['content-type'] = 'image/x-icon'
+      else if (cleanPath.endsWith('.json') || cleanPath.endsWith('.webmanifest')) set.headers['content-type'] = 'application/manifest+json'
+
+      return file
+    }
+
+    const indexFile = Bun.file(join(frontendDistPath, 'index.html'))
+    if (!(await indexFile.exists())) {
+      set.status = 500
+      return 'Frontend not built'
+    }
+
+    set.headers['content-type'] = 'text/html'
+    return indexFile
+  })
+}
+
+// เริ่มต้นระบบ
+await initCookies()
+await initJobManager()
+
+if (process.env.NODE_ENV !== 'test') {
+  app.listen(PORT)
+  log('info', `🦊 Zentyr Fetch Backend running at http://localhost:${PORT}`)
+  if (process.env.NODE_ENV === 'production' || distExists) {
+    log('info', `📦 Serving frontend from ${frontendDistPath}`)
+  }
+}
+
+// ===== Helper =====
+function handleError(error: unknown, set: { status?: any }): ApiResponse {
+  if (error instanceof AppError) {
+    set.status = error.statusCode
+    return { success: false, error: { code: error.code, message: error.message, suggestion: error.suggestion } }
+  }
+  log('error', 'Unexpected error', { message: (error as Error).message })
+  set.status = 500
+  return { success: false, error: { code: 'INTERNAL_ERROR', message: 'เกิดข้อผิดพลาด กรุณาลองใหม่ครับ' } }
+}
