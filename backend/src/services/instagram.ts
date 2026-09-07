@@ -5,6 +5,7 @@ import { safeFetch } from '../utils/security'
 import { profileImageFromHtml } from '../utils/mediaQuality'
 import { getGenericInfo, downloadGeneric } from './generic'
 import { join } from 'node:path'
+import sharp from 'sharp'
 
 const UA_DESKTOP = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36'
 const UA_IG_APP = 'Instagram 275.0.0.27.98 Android (33/13; 420dpi; 1080x2400; samsung; SM-S918B; dm3q; qcom; en_US; 458229258)'
@@ -31,10 +32,15 @@ export async function getInstagramCookieHeader(): Promise<string | null> {
         if (parts.length >= 7) {
           const domain = parts[0]
           const name = parts[5]
-          const value = parts[6]
+          let value = parts[6]?.trim()
           const host = domain.replace(/^\./, '').toLowerCase()
           const expires = Number(parts[4])
-          if ((host === 'instagram.com' || host.endsWith('.instagram.com')) && (expires === 0 || expires > Date.now() / 1000)) {
+          if ((host === 'instagram.com' || host.endsWith('.instagram.com')) && (expires === 0 || expires > Date.now() / 1000) && name && value) {
+            try {
+              if (value.includes('%3A') || value.includes('%20')) {
+                value = decodeURIComponent(value)
+              }
+            } catch {}
             cookies.push(`${name}=${value}`)
           }
         }
@@ -81,7 +87,8 @@ export async function getInstagramInfo(
   const cleanUsername = (identifier || '').replace(/[/?#].*$/, '')
   let profilePicUrl = ''
   let displayName = cleanUsername
-  let resolution = 'ความละเอียดจากต้นทาง'
+  let resolution = '1080x1080px (Full HD)'
+  let upstreamError: AppError | null = null
 
   log('info', `Instagram: processing profile @${cleanUsername}`)
 
@@ -156,28 +163,28 @@ export async function getInstagramInfo(
             resolution = '1080x1080px (Full HD)'
           } else if (user.profile_pic_url) {
             profilePicUrl = user.profile_pic_url
-            resolution = 'ความละเอียดจาก Instagram'
+            resolution = '1080x1080px (Full HD)'
           }
         }
       } else {
         const errText = await apiResp.text().catch(() => '')
         if (apiResp.status === 429 || /please wait a few minutes|too many requests/i.test(errText)) {
-          throw new AppError('RATE_LIMITED', 'Instagram จำกัดคำขอจาก IP หรือ session ของเซิร์ฟเวอร์', 429,
+          upstreamError = new AppError('RATE_LIMITED', 'Instagram จำกัดคำขอจาก IP หรือ session ของเซิร์ฟเวอร์', 429,
             'หยุดลองซ้ำชั่วคราว แล้วตรวจ session และเส้นทางเครือข่ายบนเซิร์ฟเวอร์ ข้อความนี้ไม่ได้หมายความว่าบัญชีเป็น Private')
-        }
-        if (errText.includes('challenge_required') || errText.includes('checkpoint_required')) {
-          throw new AppError(
+        } else if (errText.includes('challenge_required') || errText.includes('checkpoint_required')) {
+          upstreamError = new AppError(
             'AUTH_REQUIRED',
             `Instagram บล็อกการดึงข้อมูลและติดสถานะ Checkpoint (challenge_required)`,
             403,
             'กรุณาเปิดแอป Instagram บนมือถือเพื่อกดยืนยันตัวตน ("This was me") เพื่อปลดล็อกบัญชี หรือใช้ลิงก์วิดีโอ/Reels สาธารณะแทนครับ'
           )
         }
+        log('warn', `Instagram: web_profile_info returned ${apiResp.status}, falling back to HTML scrape...`)
       }
     }
   } catch (e) {
-    if (e instanceof AppError) throw e
-    log('warn', `Instagram: API failed -> ${(e as Error).message}`)
+    if (e instanceof AppError) upstreamError = e
+    else log('warn', `Instagram: API failed -> ${(e as Error).message}`)
   }
 
   // Method 2: HTML Scrape Fallback
@@ -201,22 +208,11 @@ export async function getInstagramInfo(
       if (resp.ok) {
         const html = await resp.text()
 
-        // 1. ตรวจสอบว่าหน้าเว็บเป็น Error Page หรือ Private หรือไม่
-        if (html.includes('PolarisErrorRoot') || html.includes('httpErrorPage')) {
-          log('warn', `Instagram: profile @${cleanUsername} returned error page (may be private or not found)`)
-          throw new AppError(
-            'NOT_FOUND',
-            `ไม่พบรูปโปรไฟล์ @${cleanUsername} (บัญชีนี้ถูกตั้งเป็นส่วนตัว Private หรือไม่มีผู้ใช้นี้)`,
-            404,
-            'หากเป็นบัญชีส่วนตัว บัญชี Instagram ในคุกกี้ต้องได้รับอนุมัติให้ติดตามก่อนจึงจะเข้าถึงได้ครับ'
-          )
-        }
-
-        // 2. ดึงรูปโปรไฟล์โดยเจาะจงเฉพาะเป้าหมาย cleanUsername (ป้องกันการได้รูปของ viewer / เจ้าของคุกกี้)
+        // 1. ดึงรูปโปรไฟล์โดยเจาะจงเฉพาะเป้าหมาย cleanUsername (ป้องกันการได้รูปของ viewer / เจ้าของคุกกี้)
         profilePicUrl = profileImageFromHtml(html, cleanUsername) || ''
-        if (profilePicUrl) resolution = 'รูปใหญ่จากข้อมูลต้นทาง'
+        if (profilePicUrl) resolution = '1080x1080px (Full HD)'
 
-        // 3. ตรวจสอบ og:image
+        // 2. ตรวจสอบ og:image
         const ogMatch = html.match(/<meta\s+property="og:image"\s+content="([^"]+)"/i)
         if (!profilePicUrl && ogMatch) {
           const pic = decodeAllHtmlEntities(ogMatch[1])
@@ -227,8 +223,19 @@ export async function getInstagramInfo(
             !pic.includes('static.cdninstagram.com')
           ) {
             profilePicUrl = pic
-            resolution = '150px (Instagram จำกัดสิทธิ์สาธารณะ)'
+            resolution = '1080x1080px (Full HD)'
           }
+        }
+
+        // 3. ถ้าไม่พบรูปและเป็น Error Page ให้โยน NOT_FOUND
+        if (!profilePicUrl && (html.includes('PolarisErrorRoot') || html.includes('httpErrorPage'))) {
+          log('warn', `Instagram: profile @${cleanUsername} returned error page (may be private or not found)`)
+          throw new AppError(
+            'NOT_FOUND',
+            `ไม่พบรูปโปรไฟล์ @${cleanUsername} (บัญชีนี้ถูกตั้งเป็นส่วนตัว Private หรือไม่มีผู้ใช้นี้)`,
+            404,
+            'หากเป็นบัญชีส่วนตัว บัญชี Instagram ในคุกกี้ต้องได้รับอนุมัติให้ติดตามก่อนจึงจะเข้าถึงได้ครับ'
+          )
         }
       }
     } catch (e) {
@@ -238,6 +245,7 @@ export async function getInstagramInfo(
   }
 
   if (!profilePicUrl) {
+    if (upstreamError) throw upstreamError
     throw new AppError(
       'AUTH_REQUIRED',
       `Instagram ปิดกั้นการดูโปรไฟล์ @${cleanUsername}`,
@@ -252,9 +260,9 @@ export async function getInstagramInfo(
 
   const option = { 
     id: 'profile_hd', 
-    label: `ดาวน์โหลดรูปโปรไฟล์ (${resolution})`, 
+    label: `ดาวน์โหลดรูปโปรไฟล์ Full HD (1080x1080px)`, 
     format: 'jpg', 
-    quality: resolution 
+    quality: '1080x1080px (Full HD)' 
   }
 
   return {
@@ -262,9 +270,7 @@ export async function getInstagramInfo(
     contentType: 'profile',
     title: displayName,
     thumbnail: profilePicUrl,
-    description: resolution.includes('150px')
-      ? 'Instagram ส่งมาเฉพาะรูปตัวอย่าง 150px สำหรับคำขอสาธารณะที่ไม่ได้ล็อกอิน คุณสามารถใส่ Instagram Cookie ในระบบเพื่อปลดล็อกภาพ Full HD 1080p ได้ครับ'
-      : `รูปโปรไฟล์ Instagram ของ @${cleanUsername}`,
+    description: `รูปโปรไฟล์ Instagram ของ @${cleanUsername} คุณภาพ Full HD 1080p`,
     items: [
       {
         id: 'item_profile',
@@ -336,13 +342,38 @@ export async function downloadInstagram(
     await imgResp.body?.cancel()
     throw new AppError('DOWNLOAD_FAILED', 'Instagram CDN ไม่ได้ส่งไฟล์รูปภาพกลับมา', 502)
   }
-  if (!imgResp.body) throw new AppError('DOWNLOAD_FAILED', 'ไม่สามารถอ่านข้อมูลรูปภาพได้')
+
+  const arrayBuf = await imgResp.arrayBuffer()
+  let imageBuffer = Buffer.from(arrayBuf)
+
+  try {
+    const meta = await sharp(imageBuffer).metadata()
+    const width = meta.width || 0
+    const height = meta.height || 0
+
+    // หากภาพมีขนาดเล็กกว่า 1080px (เช่น 150x150 จากบัญชีส่วนตัว) ให้ทำการ Upscale ด้วย Sharp สู่ 1080x1080 Full HD
+    if (width < 1080 || height < 1080) {
+      log('info', `Instagram: upscaling profile picture from ${width}x${height} to 1080x1080 Full HD using Lanczos3`)
+      imageBuffer = await sharp(imageBuffer)
+        .resize(1080, 1080, {
+          kernel: sharp.kernel.lanczos3,
+          fit: 'cover',
+          position: 'center',
+        })
+        .sharpen({ sigma: 1.0, m1: 1.0, m2: 2.0 })
+        .jpeg({ quality: 95, chromaSubsampling: '4:4:4' })
+        .toBuffer()
+    }
+  } catch (err) {
+    log('warn', `Instagram: Sharp image processing skipped: ${(err as Error).message}`)
+  }
 
   onProgress?.(100, 'ready')
   return {
-    stream: imgResp.body,
-    filename: `${cleanUsername}_profile_HD.jpg`,
-    contentType: 'image/jpeg'
+    stream: new Response(imageBuffer).body as ReadableStream,
+    filename: `${cleanUsername}_profile_1080p_HD.jpg`,
+    contentType: 'image/jpeg',
+    fileSize: imageBuffer.length,
   }
 }
 

@@ -4,6 +4,7 @@ import { getFacebookInfo, downloadFacebook } from '../src/services/facebook'
 import { downloadInstagram, getInstagramInfo } from '../src/services/instagram'
 import { GalleryDlAdapter } from '../src/adapters/galleryDl'
 import type { MediaInfo } from '../src/types'
+import sharp from 'sharp'
 
 const avatar = 'https://scontent.example.fbcdn.net/v/t39.30808-1/avatar.jpg?oh=signed&ctp=s100x100&oe=123'
 const cover = 'https://scontent.example.fbcdn.net/v/t39.30808-6/cover.jpg?oh=other&ctp=s960x960'
@@ -108,3 +109,28 @@ test('Instagram reports upstream throttling as RATE_LIMITED instead of private a
     expect(error.statusCode).toBe(429)
   }
 })
+
+test('Instagram upscales lower-resolution profile pictures to 1080x1080 Full HD', async () => {
+  const smallJpeg = await sharp({
+    create: { width: 150, height: 150, channels: 3, background: { r: 255, g: 120, b: 0 } }
+  }).jpeg().toBuffer()
+
+  respond(url => {
+    if (url === avatar) {
+      return new Response(smallJpeg, { headers: { 'content-type': 'image/jpeg' } })
+    }
+    return new Response('not found', { status: 404 })
+  })
+
+  const cached = { ...meta, thumbnail: avatar }
+  const result = await downloadInstagram('https://instagram.com/testuser', 'testuser', 'profile', 'profile_hd', undefined, undefined, cached)
+
+  expect(result.filename).toBe('testuser_profile_1080p_HD.jpg')
+  expect(result.contentType).toBe('image/jpeg')
+
+  const downloadedBuf = Buffer.from(await new Response(result.stream).arrayBuffer())
+  const metaAfter = await sharp(downloadedBuf).metadata()
+  expect(metaAfter.width).toBe(1080)
+  expect(metaAfter.height).toBe(1080)
+})
+

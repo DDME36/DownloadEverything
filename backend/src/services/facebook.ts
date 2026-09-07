@@ -23,7 +23,15 @@ function isFacebookLoginWall(html: string): boolean {
  */
 async function getFacebookCookie(): Promise<string> {
   const envCookie = process.env.FACEBOOK_COOKIE
-  if (envCookie?.trim()) return envCookie.trim()
+  if (envCookie?.trim()) {
+    let cleanEnv = envCookie.trim()
+    try {
+      if (cleanEnv.includes('%3A') || cleanEnv.includes('%20')) {
+        cleanEnv = decodeURIComponent(cleanEnv)
+      }
+    } catch {}
+    return cleanEnv
+  }
 
   const cookiesPath = getCookiesPath() || join(getDataDir(), 'cookies', 'cookies.txt')
   try {
@@ -39,11 +47,16 @@ async function getFacebookCookie(): Promise<string> {
         if (parts.length >= 7) {
           const domain = parts[0]
           const name = parts[5]
-          const value = parts[6]?.trim()
+          let value = parts[6]?.trim()
           const host = domain.replace(/^\./, '').toLowerCase()
           const expires = Number(parts[4])
           if ((host === 'facebook.com' || host.endsWith('.facebook.com')) &&
               (expires === 0 || expires > Date.now() / 1000) && name && value) {
+            try {
+              if (value.includes('%3A') || value.includes('%20')) {
+                value = decodeURIComponent(value)
+              }
+            } catch {}
             cookies.push(`${name}=${value}`)
           }
         }
