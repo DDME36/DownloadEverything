@@ -1,8 +1,8 @@
-import React from 'react'
+import React, { memo } from 'react'
 
-export default function SkeletonState() {
+function SkeletonState() {
   return (
-    <div className="skeleton">
+    <div className="skeleton" aria-hidden="true">
       <div className="skeleton__shimmer" />
       <div className="skeleton__body">
         <div className="skeleton__title" />
@@ -15,3 +15,5 @@ export default function SkeletonState() {
     </div>
   )
 }
+
+export default memo(SkeletonState)

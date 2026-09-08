@@ -1,15 +1,19 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useRef, memo } from 'react'
 import { createPortal } from 'react-dom'
 import { Play, Trash2, Clock, X } from 'lucide-react'
 import SmartThumbnail from './SmartThumbnail'
 
-export default function HistoryList({ history, onSelect, onRemove, onClearAll }) {
+function HistoryList({ history, onSelect, onRemove, onClearAll }) {
   const [removingUrl, setRemovingUrl] = useState(null)
   const [showConfirmClear, setShowConfirmClear] = useState(false)
+  const clearBtnRef = useRef(null)
 
   useEffect(() => {
     const handleKeyDown = (e) => {
-      if (e.key === 'Escape' && showConfirmClear) setShowConfirmClear(false)
+      if (e.key === 'Escape' && showConfirmClear) {
+        setShowConfirmClear(false)
+        clearBtnRef.current?.focus()
+      }
     }
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
@@ -25,30 +29,34 @@ export default function HistoryList({ history, onSelect, onRemove, onClearAll })
 
   if (!history || history.length === 0) {
     return (
-      <div className="history-section animate-fade-in">
-        <h4 className="history-title">
-          <Clock size={16} /> ลิงก์ล่าสุดของคุณ
-        </h4>
+      <section className="history-section animate-fade-in" aria-labelledby="history-heading">
+        <h2 id="history-heading" className="history-title">
+          <Clock size={16} aria-hidden="true" />
+          <span>ลิงก์ล่าสุดของคุณ</span>
+        </h2>
         <div className="history-empty">
           ลิงก์ที่วิเคราะห์แล้วจะอยู่ตรงนี้ เพื่อให้กลับมาเลือกดาวน์โหลดได้อีกครั้ง
         </div>
-      </div>
+      </section>
     )
   }
 
   return (
-    <div className="history-section animate-fade-in">
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px' }}>
-        <h4 className="history-title" style={{ margin: 0 }}>
-          <Clock size={16} /> ลิงก์ล่าสุดของคุณ
-        </h4>
+    <section className="history-section animate-fade-in" aria-labelledby="history-heading">
+      <div className="history-header-row">
+        <h2 id="history-heading" className="history-title" style={{ margin: 0 }}>
+          <Clock size={16} aria-hidden="true" />
+          <span>ลิงก์ล่าสุดของคุณ</span>
+        </h2>
         <button
+          ref={clearBtnRef}
           type="button"
           onClick={() => setShowConfirmClear(true)}
           className="history-clear-all-btn"
           title="ล้างประวัติลิงก์ทั้งหมด"
+          aria-label="ล้างประวัติลิงก์ทั้งหมด"
         >
-          <Trash2 size={13} /> ล้างทั้งหมด
+          <Trash2 size={13} aria-hidden="true" /> ล้างทั้งหมด
         </button>
       </div>
 
@@ -88,8 +96,12 @@ export default function HistoryList({ history, onSelect, onRemove, onClearAll })
             <div className="confirm-modal-actions">
               <button
                 type="button"
+                autoFocus
                 className="confirm-btn-cancel"
-                onClick={() => setShowConfirmClear(false)}
+                onClick={() => {
+                  setShowConfirmClear(false)
+                  clearBtnRef.current?.focus()
+                }}
               >
                 ยกเลิก
               </button>
@@ -99,9 +111,10 @@ export default function HistoryList({ history, onSelect, onRemove, onClearAll })
                 onClick={() => {
                   onClearAll()
                   setShowConfirmClear(false)
+                  clearBtnRef.current?.focus()
                 }}
               >
-                <Trash2 size={16} /> ล้างทั้งหมด
+                <Trash2 size={16} aria-hidden="true" /> ล้างทั้งหมด
               </button>
             </div>
           </div>
@@ -114,7 +127,7 @@ export default function HistoryList({ history, onSelect, onRemove, onClearAll })
           const isProfilePic = item.platform === 'instagram' || item.platform === 'facebook'
           const isRemoving = removingUrl === item.url
           return (
-            <div
+            <article
               key={item.url}
               className={`history-card animate-card-in ${isRemoving ? 'history-card--removing' : ''}`}
               style={{ animationDelay: `${index * 0.04}s` }}
@@ -130,7 +143,7 @@ export default function HistoryList({ history, onSelect, onRemove, onClearAll })
               />
 
               <div className="history-card__content">
-                <h5 className="history-card__title" title={item.title}>{item.title}</h5>
+                <h3 className="history-card__title" title={item.title}>{item.title}</h3>
                 <div className="history-card__meta">
                   <span className={`history-card__badge history-card__badge--${item.platform}`}>
                     {item.platform}
@@ -139,7 +152,7 @@ export default function HistoryList({ history, onSelect, onRemove, onClearAll })
                 </div>
               </div>
               
-              <div style={{ display: 'flex', gap: '8px' }}>
+              <div className="history-card__actions-group">
                 <button
                   type="button"
                   className="history-card__action"
@@ -147,30 +160,24 @@ export default function HistoryList({ history, onSelect, onRemove, onClearAll })
                   title="วิเคราะห์ลิงก์นี้อีกครั้ง"
                   aria-label={`วิเคราะห์ ${item.title || item.url} อีกครั้ง`}
                 >
-                  <Play size={12} /> เปิดอีกครั้ง
+                  <Play size={12} aria-hidden="true" /> เปิดอีกครั้ง
                 </button>
                 <button
                   type="button"
                   onClick={() => handleRemove(item.url)}
-                  style={{
-                    background: 'none',
-                    border: 'none',
-                    color: 'var(--text-muted)',
-                    cursor: 'pointer',
-                    padding: '8px',
-                    transition: 'all 0.2s ease',
-                  }}
-                  className="hover-error"
+                  className="history-card__delete-btn hover-error"
                   title="ลบรายการนี้"
                   aria-label={`ลบ ${item.title || item.url} ออกจากประวัติ`}
                 >
-                  <Trash2 size={14} />
+                  <Trash2 size={14} aria-hidden="true" />
                 </button>
               </div>
-            </div>
+            </article>
           )
         })}
       </div>
-    </div>
+    </section>
   )
 }
+
+export default memo(HistoryList)

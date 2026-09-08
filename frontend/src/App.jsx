@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import Header from './components/Header'
 import SmartInput from './components/SmartInput'
 import ResultCard from './components/ResultCard'
@@ -49,81 +49,88 @@ export default function App() {
     }
   }, [data, currentUrl])
 
-  const handleSubmit = (url) => {
+  const handleSubmit = useCallback((url) => {
     setCurrentUrl(url)
     analyze(url)
-  }
+  }, [analyze])
 
-  const handleSelectHistory = (historyUrl) => {
+  const handleSelectHistory = useCallback((historyUrl) => {
     setCurrentUrl(historyUrl)
     analyze(historyUrl)
-  }
+  }, [analyze])
 
-  const handleRemoveHistory = (urlToRemove) => {
+  const handleRemoveHistory = useCallback((urlToRemove) => {
     setHistory((prev) => {
       const updated = prev.filter((item) => item.url !== urlToRemove)
       try { localStorage.setItem('download_history', JSON.stringify(updated)) } catch { /* Storage may be unavailable */ }
       return updated
     })
-  }
+  }, [])
 
-  const handleClearAllHistory = () => {
+  const handleClearAllHistory = useCallback(() => {
     setHistory([])
     try { localStorage.removeItem('download_history') } catch { /* Storage may be unavailable */ }
-  }
+  }, [])
 
   return (
     <div className={`app fetch-app ${isMounted ? 'is-mounted' : 'is-loading'}`}>
+      {/* Skip Link สำหรับการนำทางด้วยคีย์บอร์ด (Accessibility WCAG AAA) */}
+      <a href="#main-content" className="skip-link">
+        ข้ามไปยังเนื้อหาหลัก
+      </a>
+
       <Header />
 
-      {/* ซ่อนช่องค้นหาเมื่อแสดงผลลัพธ์การวิเคราะห์ เพื่อลดความรกรุงรังของหน้าจอ */}
-      {!data && (
-        <SmartInput 
-          onSubmit={handleSubmit} 
-          loading={loading} 
-          onReset={reset} 
-          externalValue={currentUrl} 
-        />
-      )}
+      <main id="main-content" className="fetch-main" tabIndex="-1">
+        {/* ซ่อนช่องค้นหาเมื่อแสดงผลลัพธ์การวิเคราะห์ เพื่อลดความรกรุงรังของหน้าจอ */}
+        {!data && (
+          <SmartInput 
+            onSubmit={handleSubmit} 
+            loading={loading} 
+            onReset={reset} 
+            externalValue={currentUrl} 
+          />
+        )}
 
-      {error && <ErrorAlert error={error} onClose={reset} />}
-      
-      {loading && (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '16px', alignItems: 'center', margin: '20px 0' }}>
-          <SkeletonState />
-          <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', marginTop: '-8px', textAlign: 'center' }}>
-            กำลังตรวจสอบลิงก์และค้นหารูปแบบที่ดาวน์โหลดได้…
-          </p>
-          <button onClick={reset} className="back-home-btn" style={{ padding: '8px 16px', fontSize: '0.8rem' }}>
-            ✕ ยกเลิกการวิเคราะห์
-          </button>
-        </div>
-      )}
-
-      {/* เมื่อดาวน์โหลดเสร็จ แสดงเฉพาะปุ่มกลับหน้าหลักและตัวการ์ดผลลัพธ์ */}
-      {data && !loading && (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
-          <div style={{ display: 'flex', justifyContent: 'flex-start' }}>
-            <button onClick={reset} className="back-home-btn">
-              ← กลับไปวิเคราะห์ลิงก์อื่น
+        {error && <ErrorAlert error={error} onClose={reset} />}
+        
+        {loading && (
+          <div className="analysis-loading-container animate-fade-in">
+            <SkeletonState />
+            <p className="analysis-loading-text">
+              กำลังตรวจสอบลิงก์และค้นหารูปแบบที่ดาวน์โหลดได้…
+            </p>
+            <button onClick={reset} className="back-home-btn back-home-btn--sm">
+              ✕ ยกเลิกการวิเคราะห์
             </button>
           </div>
-          <ResultCard data={data} originalUrl={currentUrl} />
-        </div>
-      )}
+        )}
 
-      {/* ซ่อน Bento Grid & History เมื่อมีผลลัพธ์หรืออยู่ระหว่างโหลดข้อมูล */}
-      {!loading && !data && (
-        <>
-          <BentoPlatforms />
-          <HistoryList
-            history={history}
-            onSelect={handleSelectHistory}
-            onRemove={handleRemoveHistory}
-            onClearAll={handleClearAllHistory}
-          />
-        </>
-      )}
+        {/* เมื่อดาวน์โหลดเสร็จ แสดงเฉพาะปุ่มกลับหน้าหลักและตัวการ์ดผลลัพธ์ */}
+        {data && !loading && (
+          <div className="result-view-wrapper animate-fade-in">
+            <div className="result-nav-row">
+              <button onClick={reset} className="back-home-btn">
+                ← กลับไปวิเคราะห์ลิงก์อื่น
+              </button>
+            </div>
+            <ResultCard data={data} originalUrl={currentUrl} />
+          </div>
+        )}
+
+        {/* ซ่อน Bento Grid & History เมื่อมีผลลัพธ์หรืออยู่ระหว่างโหลดข้อมูล */}
+        {!loading && !data && (
+          <>
+            <BentoPlatforms />
+            <HistoryList
+              history={history}
+              onSelect={handleSelectHistory}
+              onRemove={handleRemoveHistory}
+              onClearAll={handleClearAllHistory}
+            />
+          </>
+        )}
+      </main>
 
       <footer className="footer">
         <p>Zenload · Developed by Zentyr</p>

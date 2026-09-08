@@ -1,9 +1,9 @@
-import React, { useState } from 'react'
+import React, { useState, useEffect, useCallback, memo } from 'react'
 import { Archive, Download, Image as ImageIcon, Video, ChevronLeft, ChevronRight, Loader2, Music } from 'lucide-react'
 import { resolveBackendUrl } from '../services/api'
 import DownloadProgressPanel from './DownloadProgressPanel'
 
-export default function AlbumGallery({
+function AlbumGallery({
   items = [],
   title = '',
   onDownloadItem,
@@ -23,22 +23,46 @@ export default function AlbumGallery({
 }) {
   const [selectedIndex, setSelectedIndex] = useState(0)
 
+  const handlePrev = useCallback(() => {
+    setSelectedIndex((prev) => (prev > 0 ? prev - 1 : items.length - 1))
+  }, [items.length])
+
+  const handleNext = useCallback(() => {
+    setSelectedIndex((prev) => (prev < items.length - 1 ? prev + 1 : 0))
+  }, [items.length])
+
+  // การนำทางด้วยแป้นพิมพ์สำหรับแกลเลอรี (WCAG 2.2 Keyboard Accessibility)
+  useEffect(() => {
+    const handleKeyDown = (e) => {
+      if (['INPUT', 'TEXTAREA'].includes(document.activeElement?.tagName)) return
+
+      if (e.key === 'ArrowLeft') {
+        e.preventDefault()
+        handlePrev()
+      } else if (e.key === 'ArrowRight') {
+        e.preventDefault()
+        handleNext()
+      } else if (e.key === 'Home') {
+        e.preventDefault()
+        setSelectedIndex(0)
+      } else if (e.key === 'End') {
+        e.preventDefault()
+        setSelectedIndex(items.length - 1)
+      }
+    }
+
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [handlePrev, handleNext, items.length])
+
   if (!items || items.length === 0) return null
 
   const selectedItem = items[selectedIndex] || items[0]
   const isSelectedVideo = selectedItem.kind === 'video'
   const isSelectedAudio = selectedItem.kind === 'audio'
 
-  const handlePrev = () => {
-    setSelectedIndex((prev) => (prev > 0 ? prev - 1 : items.length - 1))
-  }
-
-  const handleNext = () => {
-    setSelectedIndex((prev) => (prev < items.length - 1 ? prev + 1 : 0))
-  }
-
   return (
-    <div className="album-gallery" role="region" aria-label="แกลเลอรีอัลบั้ม">
+    <div className="album-gallery" role="region" aria-roledescription="carousel" aria-label="แกลเลอรีสื่ออัลบั้ม">
       {/* Header with Total Items and ZIP All Button */}
       <div className="album-gallery__header">
         <div className="album-gallery__title-group">
@@ -199,3 +223,5 @@ export default function AlbumGallery({
     </div>
   )
 }
+
+export default memo(AlbumGallery)

@@ -6,6 +6,45 @@
   <meta name="description" content="Zenload - ดาวน์โหลดวิดีโอ เพลง และรูปภาพจาก YouTube, Instagram, Facebook, SoundCloud, TikTok และอีกมากมาย เร็ว คมชัด ปลอดภัย" />
   <title>Zenload – Media Downloader</title>
   
+  <!-- SEO & Social Sharing (OpenGraph, Twitter Cards, Canonical) -->
+  <meta name="keywords" content="ดาวน์โหลดวิดีโอ, ดาวน์โหลด youtube, โหลดคลิป tiktok, ดาวน์โหลด ig, facebook video download, mp3, mp4, ดาวน์โหลดรูป tiktok, zenload" />
+  <meta name="robots" content="index, follow, max-snippet:-1, max-image-preview:large, max-video-preview:-1" />
+  <link rel="canonical" href="https://zenload.net/" />
+
+  <!-- OpenGraph Meta Tags -->
+  <meta property="og:type" content="website" />
+  <meta property="og:url" content="https://zenload.net/" />
+  <meta property="og:title" content="Zenload – ดาวน์โหลดวิดีโอ เพลง และรูปภาพจากทุกแพลตฟอร์ม" />
+  <meta property="og:description" content="เครื่องมือดาวน์โหลดสื่อออนไลน์ YouTube, TikTok (สไลด์รูป+เสียง), Instagram, Facebook, SoundCloud คมชัด ไม่มีโฆษณากวนใจ" />
+  <meta property="og:image" content="https://zenload.net/zenload-logo.png" />
+  <meta property="og:site_name" content="Zenload" />
+  <meta property="og:locale" content="th_TH" />
+
+  <!-- Twitter Card Meta Tags -->
+  <meta name="twitter:card" content="summary_large_image" />
+  <meta name="twitter:title" content="Zenload – ดาวน์โหลดวิดีโอ เพลง และรูปภาพ" />
+  <meta name="twitter:description" content="เครื่องมือดาวน์โหลดสื่อออนไลน์ YouTube, TikTok, Instagram, Facebook, SoundCloud เร็วและคมชัด" />
+  <meta name="twitter:image" content="https://zenload.net/zenload-logo.png" />
+
+  <!-- Structured Data (JSON-LD) -->
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "WebApplication",
+    "name": "Zenload",
+    "url": "https://zenload.net/",
+    "description": "ดาวน์โหลดวิดีโอ เพลง และรูปภาพจาก YouTube, TikTok, Instagram, Facebook, SoundCloud คุณภาพคมชัด ปลอดภัย",
+    "applicationCategory": "MultimediaApplication",
+    "operatingSystem": "All",
+    "browserRequirements": "Requires JavaScript. Requires HTML5.",
+    "offers": {
+      "@type": "Offer",
+      "price": "0",
+      "priceCurrency": "THB"
+    }
+  }
+  </script>
+  
   <!-- ป้องกันแสงวาบขาว (Anti-FOUC & Dark Canvas Initialization) -->
   <meta name="color-scheme" content="dark" />
   <meta name="theme-color" content="#101016" />
@@ -21,72 +60,69 @@
       -webkit-font-smoothing: antialiased;
       -moz-osx-font-smoothing: grayscale;
     }
-    /* Self-hosted Local Fonts (Zero FOUT / Instant Display) */
+    /* Self-hosted Local Fonts (Zero FOUT / Instant Display with swap) */
     @font-face {
       font-family: 'Outfit';
       font-style: normal;
       font-weight: 400;
-      font-display: block;
+      font-display: swap;
       src: url('/fonts/outfit-400.woff2') format('woff2');
     }
     @font-face {
       font-family: 'Outfit';
       font-style: normal;
       font-weight: 500;
-      font-display: block;
+      font-display: swap;
       src: url('/fonts/outfit-500.woff2') format('woff2');
     }
     @font-face {
       font-family: 'Outfit';
       font-style: normal;
       font-weight: 600;
-      font-display: block;
+      font-display: swap;
       src: url('/fonts/outfit-600.woff2') format('woff2');
     }
     @font-face {
       font-family: 'Outfit';
       font-style: normal;
       font-weight: 700;
-      font-display: block;
+      font-display: swap;
       src: url('/fonts/outfit-700.woff2') format('woff2');
     }
     @font-face {
       font-family: 'Noto Sans Thai';
       font-style: normal;
       font-weight: 400;
-      font-display: block;
+      font-display: swap;
       src: url('/fonts/noto-sans-thai-400.woff2') format('woff2');
     }
     @font-face {
       font-family: 'Noto Sans Thai';
       font-style: normal;
       font-weight: 500;
-      font-display: block;
+      font-display: swap;
       src: url('/fonts/noto-sans-thai-500.woff2') format('woff2');
     }
     @font-face {
       font-family: 'Noto Sans Thai';
       font-style: normal;
       font-weight: 600;
-      font-display: block;
+      font-display: swap;
       src: url('/fonts/noto-sans-thai-600.woff2') format('woff2');
     }
     @font-face {
       font-family: 'Noto Sans Thai';
       font-style: normal;
       font-weight: 700;
-      font-display: block;
+      font-display: swap;
       src: url('/fonts/noto-sans-thai-700.woff2') format('woff2');
     }
   </style>
 
-  <!-- Preload Core Fonts for Instant Rendering (Eliminates FOUT / Font Jump) -->
+  <!-- Preload Core Fonts for Instant Rendering (Optimized: 3 critical weights only) -->
   <link rel="preload" href="/fonts/outfit-400.woff2" as="font" type="font/woff2" crossorigin />
-  <link rel="preload" href="/fonts/outfit-600.woff2" as="font" type="font/woff2" crossorigin />
-  <link rel="preload" href="/fonts/outfit-700.woff2" as="font" type="font/woff2" crossorigin />
   <link rel="preload" href="/fonts/noto-sans-thai-400.woff2" as="font" type="font/woff2" crossorigin />
   <link rel="preload" href="/fonts/noto-sans-thai-600.woff2" as="font" type="font/woff2" crossorigin />
-  <link rel="preload" href="/fonts/noto-sans-thai-700.woff2" as="font" type="font/woff2" crossorigin />
 
   <!-- PWA & Mobile Web Apps Setup -->
   <link rel="manifest" href="/manifest.json" />

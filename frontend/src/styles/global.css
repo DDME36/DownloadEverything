@@ -132,20 +132,41 @@ body {
   position: relative;
   /* ปิด transition background บน body เพื่อตัดแสงขาววาบและอาการ fade ตอนกด F5 ทิ้ง 100% */
   transition: color 0.2s ease;
-
-  /* ห้ามลากคลุมข้อความเลียนแบบ Native App */
-  user-select: none;
-  -webkit-user-select: none;
-  -moz-user-select: none;
-  -ms-user-select: none;
 }
 
-/* อนุญาตให้เลือกและวางข้อความในฟิลด์ป้อนข้อมูล */
-input, textarea {
-  user-select: text !important;
-  -webkit-user-select: text !important;
-  -moz-user-select: text !important;
-  -ms-user-select: text !important;
+/* Skip Link สำหรับการนำทางด้วยคีย์บอร์ด (WCAG 2.2 AAA) */
+.skip-link {
+  position: absolute;
+  top: -120px;
+  left: 20px;
+  background: #9333ea;
+  color: #ffffff;
+  padding: 12px 20px;
+  border-radius: var(--radius-sm);
+  font-weight: 600;
+  font-size: 14px;
+  z-index: 99999;
+  text-decoration: none;
+  transition: top 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
+}
+.skip-link:focus,
+.skip-link:focus-visible {
+  top: 16px;
+  outline: 3px solid #ffffff !important;
+  box-shadow: 0 0 25px rgba(168, 85, 247, 0.8) !important;
+}
+
+/* ห้ามลากคลุมเฉพาะปุ่มและไอคอน เพื่อป้องกันการเผลอลากคลุมโดยไม่ตั้งใจ */
+button, .btn, .dl-btn, .badge, .zen-bento-badge, .platform-badge, .history-card__badge {
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+/* อนุญาตให้เลือกและคัดลอกข้อความ ชื่อไฟล์ รหัสข้อผิดพลาด ได้ตามปกติ */
+p, h1, h2, h3, h4, h5, h6, span, strong, input, textarea, code, pre {
+  user-select: text;
+  -webkit-user-select: text;
 }
 
 /* ปุ่มกลับไปวิเคราะห์ลิงก์อื่น */
@@ -2217,6 +2238,7 @@ body:has(.fetch-app) { background: #101016; background-image: radial-gradient(el
 .fetch-brand > span:last-child { color:#b7a1ef; font-weight:400; }
 .fetch-mark { display:grid; place-items:center; width:38px; height:38px; background:#bda4ff; color:#211733; border-radius:12px; margin-right:4px; }
 .fetch-byline { color:#aaa6bc; font-size:12px; }
+.fetch-nav-actions { display: flex; align-items: center; gap: 12px; }
 .pwa-install-btn {
   display: inline-flex;
   align-items: center;
@@ -2404,11 +2426,240 @@ body:has(.fetch-app) { background: #101016; background-image: radial-gradient(el
   transform: translateY(-1px);
 }
 .fetch-notice { color: #e2c78e; font-size: 12px; margin-top: 10px; text-align: center; }
-.fetch-platforms { text-align:center; padding:26px 0 30px; border-bottom:1px solid #ffffff12; }
-.fetch-platforms > p { color:#b0a8bf; font-size:11px; margin-bottom:15px; }
-.fetch-platforms > div { display:flex; flex-wrap:wrap; justify-content:center; gap:12px 22px; }
-.fetch-platforms span { display:flex; gap:7px; align-items:center; font-size:12px; color:#c9c3d5; }
-.fetch-platforms small { display:block; margin-top:16px; font-size:10px; color:#a9a0b8; line-height:1.8; }
+
+/* ===== Zen Obsidian Bento Grid System ===== */
+.zen-bento-section {
+  margin: 36px 0 24px;
+  padding: 0;
+}
+
+.zen-bento-header {
+  text-align: center;
+  margin-bottom: 22px;
+}
+
+.zen-bento-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 1.05rem;
+  font-weight: 700;
+  color: #f1f5f9;
+  letter-spacing: -0.2px;
+  margin: 0 0 6px;
+}
+
+.zen-bento-subtitle {
+  font-size: 0.82rem;
+  color: #a49aaf;
+  margin: 0;
+}
+
+.zen-bento-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 14px;
+}
+
+.zen-bento-card {
+  position: relative;
+  background: rgba(22, 18, 38, 0.75);
+  background-image: var(--card-gradient, none);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 18px;
+  padding: 18px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: 14px;
+  transition: transform 0.28s cubic-bezier(0.16, 1, 0.3, 1),
+              border-color 0.28s ease,
+              box-shadow 0.28s ease;
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+}
+
+.zen-bento-card:hover {
+  transform: translateY(-2px);
+  border-color: var(--card-border-hover, rgba(168, 85, 247, 0.4));
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.35);
+}
+
+.zen-bento-card--highlight {
+  border-color: rgba(0, 242, 234, 0.25);
+  box-shadow: 0 4px 20px rgba(0, 242, 234, 0.08);
+}
+
+.zen-bento-card__top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.zen-bento-card__icon-wrap {
+  width: 38px;
+  height: 38px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #ffffff;
+  transition: transform 0.25s ease;
+}
+
+.zen-bento-card:hover .zen-bento-card__icon-wrap {
+  transform: scale(1.08);
+}
+
+.zen-bento-badge {
+  font-size: 0.68rem;
+  font-weight: 700;
+  padding: 3px 8px;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.08);
+  color: #e2d9f3;
+  letter-spacing: 0.3px;
+}
+
+.zen-bento-badge--pulse {
+  background: rgba(0, 242, 234, 0.15);
+  color: #00f2ea;
+  border: 1px solid rgba(0, 242, 234, 0.3);
+}
+
+.zen-bento-card__name {
+  font-size: 0.98rem;
+  font-weight: 700;
+  color: #ffffff;
+  margin: 0 0 4px;
+}
+
+.zen-bento-card__desc {
+  font-size: 0.78rem;
+  color: #bbb3c9;
+  line-height: 1.45;
+  margin: 0;
+}
+
+.zen-bento-card__tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.zen-bento-tag {
+  font-size: 0.7rem;
+  font-weight: 500;
+  padding: 3px 8px;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  color: #a49aaf;
+}
+
+.zen-bento-footer {
+  display: flex;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 16px 24px;
+  margin-top: 20px;
+  padding-top: 18px;
+  border-top: 1px solid rgba(255, 255, 255, 0.07);
+}
+
+.zen-bento-perk {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 0.78rem;
+  color: #c9c2d7;
+}
+
+/* Layout Utility Classes */
+.analysis-loading-container {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  align-items: center;
+  margin: 24px 0;
+}
+
+.analysis-loading-text {
+  color: var(--text-secondary);
+  font-size: 0.88rem;
+  margin-top: -6px;
+  text-align: center;
+}
+
+.back-home-btn--sm {
+  padding: 8px 16px;
+  font-size: 0.8rem;
+}
+
+.result-view-wrapper {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.result-nav-row {
+  display: flex;
+  justify-content: flex-start;
+}
+
+.history-header-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 14px;
+}
+
+.history-card__actions-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.history-card__delete-btn {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  min-width: 44px;
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+  transition: all 0.2s ease;
+}
+
+.history-card__delete-btn:hover {
+  color: var(--error);
+  background: var(--error-bg);
+}
+
+@media (max-width: 900px) {
+  .zen-bento-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+@media (max-width: 580px) {
+  .zen-bento-grid {
+    grid-template-columns: 1fr;
+    gap: 10px;
+  }
+  .zen-bento-footer {
+    flex-direction: column;
+    align-items: center;
+    gap: 10px;
+  }
+}
+
 .fetch-app .history-section { margin-top:28px; }
 .fetch-app .history-empty { border:1px dashed #ffffff20; background:transparent; padding:24px; font-size:12px; color:#aaa3b9; border-radius:12px; }
 .fetch-app .history-title { font-size:13px; color:#d8d1e6; }
@@ -2449,8 +2700,7 @@ body:has(.fetch-app) { background: #101016; background-image: radial-gradient(el
   .fetch-input .smart-input__field { flex: 1 1 60%; min-width: 0; font-size: 16px; padding: 10px 4px; }
   .fetch-input .smart-input__btn { width: 100%; justify-content: center; min-height: 44px; }
   .fetch-input-bottom { align-items: center; flex-direction: column; justify-content: center; gap: 8px; text-align: center; }
-  .fetch-input-label span { display: none; }
-  .fetch-platforms > div { gap: 10px 16px; }
+  .fetch-input-label .fetch-input-hint { display: none; }
   .fetch-app .history-card { flex-wrap: wrap; gap: 10px; }
 }
 

@@ -1,7 +1,7 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, memo } from 'react'
 import { Image, Music2, Video, Download } from 'lucide-react'
 
-export default function Header() {
+function Header() {
   const [installPrompt, setInstallPrompt] = useState(null)
   const [isInstalled, setIsInstalled] = useState(false)
 
@@ -42,31 +42,34 @@ export default function Header() {
   }
 
   return (
-    <header className="fetch-header">
+    <header className="fetch-header" role="banner">
       <div className="fetch-nav">
-        <a href="/" className="fetch-brand">
-          <span className="fetch-mark"><img src="/zenload-logo.png?v=zenload4" width="36" height="36" alt="Zenload" /></span>
+        <a href="/" className="fetch-brand" aria-label="Zenload หน้าหลัก">
+          <span className="fetch-mark">
+            <img src="/zenload-logo.png?v=zenload4" width="36" height="36" alt="โลโก้ Zenload" />
+          </span>
           <strong>Zenload</strong>
         </a>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+        <div className="fetch-nav-actions">
           {installPrompt && !isInstalled && (
             <button
               type="button"
               onClick={handleInstallClick}
               className="pwa-install-btn"
               title="ติดตั้ง Zenload ลงในเครื่องหรือมือถือ"
+              aria-label="ติดตั้งแอป Zenload ลงในอุปกรณ์"
             >
-              <Download size={13} /> ติดตั้งแอป
+              <Download size={14} /> ติดตั้งแอป
             </button>
           )}
-          <span className="fetch-byline">A little tool by Zentyr</span>
+          <span className="fetch-byline">A craft tool by Zentyr</span>
         </div>
       </div>
       <div className="fetch-hero">
         <p className="fetch-eyebrow">YOUR MEDIA, ONE PLACE</p>
         <h1>เจอลิงก์ที่ชอบ<br /><span>เก็บไว้ได้ในที่เดียว</span></h1>
-        <p>วางลิงก์ เลือกรูปแบบ แล้วดาวน์โหลดสื่อที่ต้องการ</p>
-        <div className="fetch-media-types">
+        <p>วางลิงก์ เลือกรูปแบบ แล้วดาวน์โหลดสื่อที่ต้องการได้ทันที</p>
+        <div className="fetch-media-types" aria-label="ประเภทสื่อที่รองรับ">
           <span><Video size={15} /> วิดีโอ</span>
           <span><Music2 size={15} /> เสียง</span>
           <span><Image size={15} /> รูปภาพ</span>
@@ -75,6 +78,9 @@ export default function Header() {
     </header>
   )
 }
+
+export default memo(Header)
+
 
 
 
