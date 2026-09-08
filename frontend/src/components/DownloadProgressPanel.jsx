@@ -1,5 +1,7 @@
 import React, { useState, useEffect } from 'react'
-import { CheckCircle2, AlertTriangle, Share2, RotateCcw, Clock, X, Loader2, Download } from 'lucide-react'
+import { CheckCircle2, AlertTriangle, Share2, RotateCcw, Clock, X, Loader2, Download, ExternalLink, FileUp } from 'lucide-react'
+import { isIOSPWA } from '../utils/device'
+import { resolveBackendUrl } from '../services/api'
 
 export default function DownloadProgressPanel({
   downloadStatus = '', // '', 'running', 'done', 'error'
@@ -15,6 +17,12 @@ export default function DownloadProgressPanel({
   onReset,
 }) {
   const [visualProgress, setVisualProgress] = useState(0)
+  const [iosPwa, setIosPwa] = useState(false)
+  const [isSharing, setIsSharing] = useState(false)
+
+  useEffect(() => {
+    setIosPwa(isIOSPWA())
+  }, [])
 
   // รีเซ็ตความคืบหน้าให้เริ่มจาก 0 เสมอเมื่อเริ่มงานใหม่
   useEffect(() => {
@@ -38,6 +46,44 @@ export default function DownloadProgressPanel({
     return `${Math.floor(sec / 60)} น. ${sec % 60} วิ`
   }
 
+  // แชร์หรือบันทึกไฟล์โดยตรงผ่าน Web Share API สำหรับโหมด iOS PWA
+  const handleDirectShare = async () => {
+    const targetUrl = resolveBackendUrl(lastDownloadedUrl)
+    if (!targetUrl) {
+      if (onShare) onShare()
+      return
+    }
+    setIsSharing(true)
+    try {
+      const resp = await fetch(targetUrl)
+      const blob = await resp.blob()
+      const ext = lastDownloadedFilename?.split('.').pop() || 'mp4'
+      const mime = blob.type || (ext === 'mp4' ? 'video/mp4' : ext === 'mp3' ? 'audio/mpeg' : 'image/jpeg')
+      const file = new File([blob], lastDownloadedFilename || `media.${ext}`, { type: mime })
+
+      if (navigator.canShare && navigator.canShare({ files: [file] })) {
+        await navigator.share({
+          files: [file],
+          title: lastDownloadedFilename || 'Zenload Media',
+        })
+      } else if (navigator.share) {
+        await navigator.share({
+          title: lastDownloadedFilename || 'Zenload Media',
+          url: targetUrl,
+        })
+      } else if (onShare) {
+        onShare()
+      }
+    } catch (err) {
+      if (err.name !== 'AbortError') {
+        console.warn('Direct share failed:', err)
+        if (onShare) onShare()
+      }
+    } finally {
+      setIsSharing(false)
+    }
+  }
+
   // 1. Success Completed State
   if (downloadStatus === 'done') {
     return (
@@ -53,7 +99,9 @@ export default function DownloadProgressPanel({
         <div className="download-result-panel__body">
           <h3 className="download-result-panel__title">ไฟล์พร้อมส่งมอบแล้ว!</h3>
           <p className="download-result-panel__desc">
-            เบราว์เซอร์เริ่มดาวน์โหลดไฟล์แล้ว ตรวจสอบรายการดาวน์โหลดของอุปกรณ์คุณ หรือกดบันทึก/ส่งแชร์ด้านล่าง
+            {iosPwa
+              ? 'ระบบจัดเตรียมไฟล์เรียบร้อยแล้ว แตะปุ่มด้านล่างเพื่อบันทึกลงแอปรูปภาพ (Photos) หรือส่งแชร์'
+              : 'เบราว์เซอร์เริ่มดาวน์โหลดไฟล์แล้ว ตรวจสอบรายการดาวน์โหลดของอุปกรณ์คุณ หรือกดบันทึก/ส่งแชร์ด้านล่าง'}
           </p>
           {lastDownloadedFilename && (
             <div className="download-result-panel__file-chip" title={lastDownloadedFilename}>
@@ -61,27 +109,70 @@ export default function DownloadProgressPanel({
               <span className="download-result-panel__file-name">{lastDownloadedFilename}</span>
             </div>
           )}
+          {iosPwa && (
+            <p className="download-result-panel__pwa-tip">
+              💡 <strong>สำหรับ iPhone (PWA):</strong> แตะ <em>"บันทึกลงรูปภาพ (Photos) / แชร์"</em> แล้วเลือก <em>"บันทึกภาพ" (Save Image)</em> หรือ <em>"บันทึกวิดีโอ"</em> ไฟล์จะเข้าแอปรูปภาพทันที
+            </p>
+          )}
         </div>
 
         <div className="download-result-panel__actions">
-          {lastDownloadedUrl && (
-            <a
-              href={lastDownloadedUrl}
-              download={lastDownloadedFilename || 'download'}
-              className="dl-btn dl-btn--primary"
-            >
-              <Download size={15} /> กดดาวน์โหลดไฟล์
-            </a>
+          {iosPwa ? (
+            <>
+              <button
+                type="button"
+                className="dl-btn dl-btn--primary"
+                onClick={handleDirectShare}
+                disabled={isSharing}
+              >
+                {isSharing ? <Loader2 size={15} className="lucide-spin" /> : <Share2 size={15} />}
+                <span>{isSharing ? 'กำลังเตรียมไฟล์...' : 'บันทึกลงรูปภาพ (Photos) / แชร์'}</span>
+              </button>
+
+              {onShare && (
+                <button
+                  type="button"
+                  className="dl-btn dl-btn--secondary"
+                  onClick={onShare}
+                >
+                  <FileUp size={15} /> ตัวเลือกเพิ่มเติม
+                </button>
+              )}
+
+              {lastDownloadedUrl && (
+                <a
+                  href={resolveBackendUrl(lastDownloadedUrl)}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="dl-btn dl-btn--ghost"
+                >
+                  <ExternalLink size={13} /> เปิดใน Safari (ภายนอก)
+                </a>
+              )}
+            </>
+          ) : (
+            <>
+              {lastDownloadedUrl && (
+                <a
+                  href={lastDownloadedUrl}
+                  download={lastDownloadedFilename || 'download'}
+                  className="dl-btn dl-btn--primary"
+                >
+                  <Download size={15} /> กดดาวน์โหลดไฟล์
+                </a>
+              )}
+              {onShare && (
+                <button
+                  type="button"
+                  className={`dl-btn ${lastDownloadedUrl ? 'dl-btn--secondary' : 'dl-btn--primary'}`}
+                  onClick={onShare}
+                >
+                  <Share2 size={15} /> บันทึกลงเครื่อง / แชร์ (มือถือ)
+                </button>
+              )}
+            </>
           )}
-          {onShare && (
-            <button
-              type="button"
-              className={`dl-btn ${lastDownloadedUrl ? 'dl-btn--secondary' : 'dl-btn--primary'}`}
-              onClick={onShare}
-            >
-              <Share2 size={15} /> บันทึกลงเครื่อง / แชร์ (มือถือ)
-            </button>
-          )}
+
           {onReset && (
             <button
               type="button"

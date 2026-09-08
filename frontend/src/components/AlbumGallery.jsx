@@ -16,6 +16,7 @@ function AlbumGallery({
   downloadError = '',
   activeOption = null,
   lastDownloadedFilename = '',
+  lastDownloadedUrl = '',
   platform = '',
   onCancel,
   onShare,
@@ -171,6 +172,7 @@ function AlbumGallery({
             downloadError={downloadError}
             activeOption={activeOption}
             lastDownloadedFilename={lastDownloadedFilename}
+            lastDownloadedUrl={lastDownloadedUrl}
             platform={platform}
             onCancel={onCancel}
             onRetry={onCancel}

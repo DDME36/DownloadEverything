@@ -1,11 +1,13 @@
 import React, { useEffect, useState } from 'react'
-import { Share2, Download, Copy, Check, X, Smartphone, Info, FileUp, Loader2 } from 'lucide-react'
+import { Share2, Download, Copy, Check, X, Smartphone, Info, FileUp, Loader2, ExternalLink } from 'lucide-react'
 import { resolveBackendUrl } from '../services/api'
+import { isIOS as detectIsIOS, isIOSPWA } from '../utils/device'
 
 export default function MobileShareModal({ isOpen, onClose, downloadUrl, title = 'ดาวน์โหลดสื่อ', filename = '' }) {
   const [copied, setCopied] = useState(false)
   const [canShare, setCanShare] = useState(false)
   const [isIOS, setIsIOS] = useState(false)
+  const [isPwa, setIsPwa] = useState(false)
   const [isSharingFile, setIsSharingFile] = useState(false)
 
   const resolvedUrl = resolveBackendUrl(downloadUrl)
@@ -13,8 +15,8 @@ export default function MobileShareModal({ isOpen, onClose, downloadUrl, title =
   useEffect(() => {
     if (typeof navigator !== 'undefined') {
       setCanShare(!!navigator.share)
-      const ua = navigator.userAgent || ''
-      setIsIOS(/iPad|iPhone|iPod/.test(ua) && !window.MSStream)
+      setIsIOS(detectIsIOS())
+      setIsPwa(isIOSPWA())
     }
   }, [])
 
@@ -149,35 +151,62 @@ export default function MobileShareModal({ isOpen, onClose, downloadUrl, title =
             </button>
           </div>
 
-          {/* iOS Safari Specific Guide */}
+          {/* iOS Safari / PWA Specific Guide */}
           {isIOS && (
             <div className="ios-guide-box">
               <div className="ios-guide-box__title">
                 <Info size={16} className="text-purple" />
-                <span>วิธีบันทึกลง Camera Roll / Files (สำหรับ iOS / Safari)</span>
+                <span>{isPwa ? 'วิธีบันทึกลงแอปรูปภาพ (สำหรับแอป PWA)' : 'วิธีบันทึกลง Camera Roll / Files (สำหรับ iOS / Safari)'}</span>
               </div>
               <ol className="ios-guide-box__steps">
-                <li>
-                  เมื่อวิดีโอเปิดขึ้น ให้แตะปุ่ม <strong>แชร์ [ ⎋ ]</strong> ที่แถบล่างของเบราว์เซอร์ Safari
-                </li>
-                <li>
-                  เลื่อนหน้าจอลงมาด้านล่าง เลือก <strong>"บันทึกวิดีโอ" (Save Video)</strong> หรือ <strong>"บันทึกไปยัง 'ไฟล์'" (Save to Files)</strong>
-                </li>
-                <li>
-                  ไฟล์จะถูกเก็บไว้ในแอป <em>รูปภาพ (Photos)</em> หรือ <em>ไฟล์ (Files)</em> ทันที
-                </li>
+                {isPwa ? (
+                  <>
+                    <li>
+                      แตะปุ่ม <strong>"แชร์ไฟล์ / บันทึกลงเครื่อง"</strong> ด้านบน
+                    </li>
+                    <li>
+                      เมนูของระบบ iOS จะเปิดขึ้นมา ให้แตะ <strong>"บันทึกภาพ" (Save Image)</strong> หรือ <strong>"บันทึกวิดีโอ" (Save Video)</strong>
+                    </li>
+                    <li>
+                      ไฟล์จะถูกบันทึกเข้าอัลบั้ม <em>รูปภาพ (Photos)</em> ทันทีโดยไม่ต้องออกจากแอป
+                    </li>
+                  </>
+                ) : (
+                  <>
+                    <li>
+                      เมื่อวิดีโอเปิดขึ้น ให้แตะปุ่ม <strong>แชร์ [ ⎋ ]</strong> ที่แถบล่างของเบราว์เซอร์ Safari
+                    </li>
+                    <li>
+                      เลื่อนหน้าจอลงมาด้านล่าง เลือก <strong>"บันทึกวิดีโอ" (Save Video)</strong> หรือ <strong>"บันทึกไปยัง 'ไฟล์'" (Save to Files)</strong>
+                    </li>
+                    <li>
+                      ไฟล์จะถูกเก็บไว้ในแอป <em>รูปภาพ (Photos)</em> หรือ <em>ไฟล์ (Files)</em> ทันที
+                    </li>
+                  </>
+                )}
               </ol>
             </div>
           )}
 
           <div className="modal-content__direct-link">
-            <a
-              href={resolvedUrl}
-              download={filename || 'download'}
-              className="modal-direct-download-link"
-            >
-              <Download size={16} /> แตะที่นี่หากการดาวน์โหลดไม่เริ่มอัตโนมัติ
-            </a>
+            {isPwa ? (
+              <a
+                href={resolvedUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="modal-direct-download-link"
+              >
+                <ExternalLink size={16} /> เปิดไฟล์ในเบราว์เซอร์ Safari (ภายนอก)
+              </a>
+            ) : (
+              <a
+                href={resolvedUrl}
+                download={filename || 'download'}
+                className="modal-direct-download-link"
+              >
+                <Download size={16} /> แตะที่นี่หากการดาวน์โหลดไม่เริ่มอัตโนมัติ
+              </a>
+            )}
           </div>
         </div>
       </div>
