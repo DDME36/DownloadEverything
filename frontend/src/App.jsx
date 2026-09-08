@@ -121,13 +121,13 @@ export default function App() {
         {/* ซ่อน Bento Grid & History เมื่อมีผลลัพธ์หรืออยู่ระหว่างโหลดข้อมูล */}
         {!loading && !data && (
           <>
-            <BentoPlatforms />
             <HistoryList
               history={history}
               onSelect={handleSelectHistory}
               onRemove={handleRemoveHistory}
               onClearAll={handleClearAllHistory}
             />
+            <BentoPlatforms />
           </>
         )}
       </main>

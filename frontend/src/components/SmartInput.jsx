@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, memo } from 'react'
-import { ArrowRight, Loader2, Clipboard, X, Link2, Sparkles } from 'lucide-react'
+import { ArrowRight, Loader2, Clipboard, X, Link2, CheckCircle2 } from 'lucide-react'
 
 function SmartInput({ onSubmit, loading, onReset, externalValue }) {
   const [url, setUrl] = useState('')
@@ -19,6 +19,18 @@ function SmartInput({ onSubmit, loading, onReset, externalValue }) {
     } catch {
       return false
     }
+  })()
+
+  const detectedPlatform = (() => {
+    const lower = url.toLowerCase()
+    if (lower.includes('tiktok.com')) return 'TikTok'
+    if (lower.includes('youtube.com') || lower.includes('youtu.be')) return 'YouTube'
+    if (lower.includes('instagram.com')) return 'Instagram'
+    if (lower.includes('facebook.com') || lower.includes('fb.watch') || lower.includes('fb.com')) return 'Facebook'
+    if (lower.includes('soundcloud.com')) return 'SoundCloud'
+    if (lower.includes('twitter.com') || lower.includes('x.com')) return 'X / Twitter'
+    if (lower.includes('reddit.com')) return 'Reddit'
+    return null
   })()
 
   const clear = () => {
@@ -55,40 +67,43 @@ function SmartInput({ onSubmit, loading, onReset, externalValue }) {
       </label>
 
       <div className="smart-input__wrapper">
-        <Link2 size={20} className="fetch-link-icon" aria-hidden="true" />
-        
-        <input
-          ref={inputRef}
-          id="media-url"
-          className="smart-input__field"
-          type="text"
-          inputMode="url"
-          value={url}
-          disabled={loading}
-          onChange={(e) => {
-            setUrl(e.target.value)
-            setNotice('')
-          }}
-          onKeyDown={(e) => {
-            if (e.key === 'Escape' && !loading) clear()
-          }}
-          placeholder="https://… วางลิงก์สื่อที่นี่"
-          autoComplete="off"
-          spellCheck={false}
-          aria-describedby="link-help"
-        />
+        <div className="smart-input__row-top">
+          <Link2 size={20} className="fetch-link-icon" aria-hidden="true" />
+          
+          <input
+            ref={inputRef}
+            id="media-url"
+            className="smart-input__field"
+            type="text"
+            inputMode="url"
+            value={url}
+            disabled={loading}
+            title={url || 'วางลิงก์ที่นี่'}
+            onChange={(e) => {
+              setUrl(e.target.value)
+              setNotice('')
+            }}
+            onKeyDown={(e) => {
+              if (e.key === 'Escape' && !loading) clear()
+            }}
+            placeholder="https://… วางลิงก์สื่อที่นี่"
+            autoComplete="off"
+            spellCheck={false}
+            aria-describedby="link-help"
+          />
 
-        {url && !loading && (
-          <button
-            type="button"
-            className="smart-input__clear-btn"
-            onClick={clear}
-            aria-label="ล้างข้อความในช่องลิงก์"
-            title="ล้างข้อความ"
-          >
-            <X size={17} aria-hidden="true" />
-          </button>
-        )}
+          {url && !loading && (
+            <button
+              type="button"
+              className="smart-input__clear-btn"
+              onClick={clear}
+              aria-label="ล้างข้อความในช่องลิงก์"
+              title="ล้างข้อความ"
+            >
+              <X size={17} aria-hidden="true" />
+            </button>
+          )}
+        </div>
 
         <button
           type="submit"
@@ -109,6 +124,23 @@ function SmartInput({ onSubmit, loading, onReset, externalValue }) {
           )}
         </button>
       </div>
+
+      {/* แถบแจ้งเตือนเมื่อวางลิงก์สำเร็จ (ป้องกันความกังวลว่าข้อความขาดหายบนมือถือ) */}
+      {url.trim() && (
+        <div className={`link-status-badge animate-fade-in ${valid ? 'link-status-badge--valid' : ''}`} role="status">
+          {valid ? (
+            <>
+              <CheckCircle2 size={13} className="text-success" aria-hidden="true" />
+              <span>
+                {detectedPlatform ? <strong>{detectedPlatform}: </strong> : null}
+                วางลิงก์ครบถ้วนแล้ว ({url.trim().length} ตัวอักษร)
+              </span>
+            </>
+          ) : (
+            <span>กำลังรอรูปแบบลิงก์ที่ถูกต้อง…</span>
+          )}
+        </div>
+      )}
 
       <div className="fetch-input-bottom">
         <button
