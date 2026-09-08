@@ -1,4 +1,4 @@
 ﻿User-agent: *
 Allow: /
 
-Sitemap: https://zenload.net/sitemap.xml
+Sitemap: https://zenload-z.vercel.app/sitemap.xml
