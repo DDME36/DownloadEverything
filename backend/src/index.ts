@@ -106,8 +106,8 @@ async function runDownloadJob(
       }
     }
 
-    const cachedMeta = mediaCache.get(url)
     const detected = detectUrl(url)
+    const cachedMeta = mediaCache.get(url) || mediaCache.get(detected.originalUrl)
 
     if (option.startsWith('item_') || option === 'album_zip') {
       result = await galleryDlAdapter.download(url, option, signal, progressCallback, cachedMeta || undefined)
@@ -431,6 +431,7 @@ export const app = new Elysia()
           for (const item of data.items) {
             if (item.thumbnail) item.thumbnail = wrapProxy(item.thumbnail)
             if (item.url && item.kind === 'image') {
+              ;(item as any).rawUrl = item.url
               item.url = wrapProxy(item.url)
             }
           }
@@ -439,6 +440,7 @@ export const app = new Elysia()
 
       // บันทึก Cache (10 นาที)
       if (data) {
+        mediaCache.set(url, data)
         mediaCache.set(detected.originalUrl, data)
       }
 

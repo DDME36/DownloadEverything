@@ -83,6 +83,37 @@ with zipfile.ZipFile(dst, 'w', zipfile.ZIP_DEFLATED) as zf:
   }
 }
 
+function unwrapProxyUrl(rawUrl: string): string {
+  if (!rawUrl) return rawUrl
+  if (rawUrl.startsWith('/api/proxy-image') || rawUrl.includes('/api/proxy-image?url=')) {
+    try {
+      const parsed = new URL(rawUrl, 'http://localhost')
+      const extracted = parsed.searchParams.get('url')
+      if (extracted) return extracted
+    } catch {}
+  }
+  return rawUrl
+}
+
+async function resolveShortlink(url: string, signal?: AbortSignal): Promise<string> {
+  if (/https?:\/\/(?:vt|vm)\.tiktok\.com\//i.test(url)) {
+    try {
+      const res = await fetch(url, {
+        method: 'GET',
+        redirect: 'follow',
+        signal,
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+        },
+      })
+      if (res.url && res.url !== url) {
+        return res.url
+      }
+    } catch {}
+  }
+  return url
+}
+
 export class GalleryDlAdapter implements DownloaderAdapter {
   readonly name = 'gallery-dl'
 
@@ -93,6 +124,7 @@ export class GalleryDlAdapter implements DownloaderAdapter {
   }
 
   async getInfo(url: string, signal?: AbortSignal): Promise<MediaInfo> {
+    const targetUrl = await resolveShortlink(url, signal)
     const cmd = await getGalleryDlCommand()
     if (!cmd) {
       throw new AppError('GALLERY_DL_NOT_INSTALLED', 'เครื่องมือ gallery-dl ไม่ได้ถูกติดตั้งบนระบบ', 501)
@@ -100,10 +132,10 @@ export class GalleryDlAdapter implements DownloaderAdapter {
 
     const cookiesPath = getCookiesPath()
     const cookieArgs = cookiesPath && (await Bun.file(cookiesPath).exists()) ? ['--cookies', cookiesPath] : []
-    const proxy = getProxyForUrl(url)
+    const proxy = getProxyForUrl(targetUrl)
     const proxyArgs = proxy !== undefined ? ['--proxy', proxy] : []
 
-    const proc = Bun.spawn([...cmd, ...cookieArgs, ...proxyArgs, '-j', '--no-download', url], {
+    const proc = Bun.spawn([...cmd, ...cookieArgs, ...proxyArgs, '-j', '--no-download', targetUrl], {
       stdout: 'pipe',
       stderr: 'pipe',
     })
@@ -305,10 +337,11 @@ export class GalleryDlAdapter implements DownloaderAdapter {
     const itemMatch = optionId.match(/^item_(\d+)_download$/)
     if (itemMatch && cachedMeta && Array.isArray((cachedMeta as any).items)) {
       const matchedItem = (cachedMeta as any).items.find((it: any) => it.id === `item_${itemMatch[1]}`)
-      if (matchedItem?.url) {
+      const rawTargetUrl = unwrapProxyUrl((matchedItem as any)?.rawUrl || matchedItem?.url)
+      if (rawTargetUrl && /^https?:\/\//i.test(rawTargetUrl)) {
         try {
           onProgress?.(20, 'downloading')
-          const res = await fetch(matchedItem.url, {
+          const res = await fetch(rawTargetUrl, {
             headers: {
               'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
             },
@@ -348,9 +381,10 @@ export class GalleryDlAdapter implements DownloaderAdapter {
         let count = 0
         await Promise.all(
           items.map(async (item, idx) => {
-            if (!item.url) return
+            const rawTargetUrl = unwrapProxyUrl((item as any)?.rawUrl || item?.url)
+            if (!rawTargetUrl || !/^https?:\/\//i.test(rawTargetUrl)) return
             try {
-              const res = await fetch(item.url, {
+              const res = await fetch(rawTargetUrl, {
                 headers: {
                   'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
                 },
@@ -389,6 +423,7 @@ export class GalleryDlAdapter implements DownloaderAdapter {
       } catch {}
     }
 
+    const targetUrl = await resolveShortlink(url, signal)
     const cmd = await getGalleryDlCommand()
     if (!cmd) {
       throw new AppError('GALLERY_DL_NOT_INSTALLED', 'เครื่องมือ gallery-dl ไม่ได้ถูกติดตั้งบนระบบ', 501)
@@ -403,7 +438,7 @@ export class GalleryDlAdapter implements DownloaderAdapter {
 
     const cookiesPath = getCookiesPath()
     const cookieArgs = cookiesPath && (await Bun.file(cookiesPath).exists()) ? ['--cookies', cookiesPath] : []
-    const proxy = getProxyForUrl(url)
+    const proxy = getProxyForUrl(targetUrl)
     const proxyArgs = proxy !== undefined ? ['--proxy', proxy] : []
 
     onProgress?.(10, 'downloading')
@@ -414,7 +449,7 @@ export class GalleryDlAdapter implements DownloaderAdapter {
       ...proxyArgs,
       '--destination', outDir,
       ...extraArgs,
-      url
+      targetUrl
     ], {
       stdout: 'pipe',
       stderr: 'pipe',
